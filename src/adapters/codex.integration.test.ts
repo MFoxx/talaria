@@ -25,6 +25,7 @@ describe.skipIf(!HAS_CODEX)('Codex adapter (installed CLI)', () => {
       toolArgs: {},
     });
     const flags = spawn.args.slice(0, -1);
+    expect(flags).toContain('--skip-git-repo-check');
     const result = spawnSync(spawn.bin, [...flags, '--help'], { encoding: 'utf8' });
 
     expect(result.status, result.stderr).toBe(0);

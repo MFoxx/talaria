@@ -70,7 +70,13 @@ describe('codex adapter', () => {
   it('uses non-interactive exec with a workspace-write sandbox by default', () => {
     const spawn = codexAdapter.buildSpawn({ ...base, prompt: 'go', toolArgs: {} });
     expect(spawn.bin).toBe('codex');
-    expect(spawn.args).toEqual(['exec', '--sandbox', 'workspace-write', 'go']);
+    expect(spawn.args).toEqual([
+      'exec',
+      '--skip-git-repo-check',
+      '--sandbox',
+      'workspace-write',
+      'go',
+    ]);
   });
 
   it('maps supported sandbox and model arguments', () => {
@@ -79,7 +85,15 @@ describe('codex adapter', () => {
       prompt: 'go',
       toolArgs: { sandbox: 'read-only', model: 'o4' },
     });
-    expect(spawn.args).toEqual(['exec', '--sandbox', 'read-only', '--model', 'o4', 'go']);
+    expect(spawn.args).toEqual([
+      'exec',
+      '--skip-git-repo-check',
+      '--sandbox',
+      'read-only',
+      '--model',
+      'o4',
+      'go',
+    ]);
     expect(spawn.args.filter((a) => a === '--sandbox')).toHaveLength(1);
   });
 

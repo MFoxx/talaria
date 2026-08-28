@@ -2,10 +2,12 @@
  * Codex adapter (ARCHITECTURE §7.3).
  *
  * Base invocation:
- *   codex exec --sandbox workspace-write <prompt>
+ *   codex exec --skip-git-repo-check --sandbox workspace-write <prompt>
  *
  * `exec` is Codex's supported non-interactive mode. Sandbox values are allowlisted
  * before they become argv elements; prompts are always passed as one final element.
+ * Talaria performs its own allowed-directory validation, so the interactive Codex
+ * trusted-directory prompt is deliberately bypassed for headless execution.
  */
 
 import { validateToolArgs } from './args.js';
@@ -47,7 +49,7 @@ export const codexAdapter: ToolAdapter = {
 
   buildSpawn(req: BuildSpawnRequest): SpawnConfig {
     const args = validateToolArgs(acceptedArgs, req.toolArgs);
-    const flags: string[] = ['exec'];
+    const flags: string[] = ['exec', '--skip-git-repo-check'];
 
     // sandbox is defaulted, so this is always set exactly once.
     if (typeof args.sandbox === 'string') {
