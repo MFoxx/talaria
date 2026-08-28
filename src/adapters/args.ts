@@ -47,6 +47,12 @@ export function validateToolArgs(
     if (!typeMatches(spec, value)) {
       throw new TalariaError('INVALID_REQUEST', `toolArg "${key}" must be of type ${spec.type}`);
     }
+    if (typeof value === 'string' && spec.choices && !spec.choices.includes(value)) {
+      throw new TalariaError(
+        'INVALID_REQUEST',
+        `toolArg "${key}" must be one of: ${spec.choices.join(', ')}`,
+      );
+    }
     out[key] = value;
   }
 
@@ -54,6 +60,13 @@ export function validateToolArgs(
     if (!(key in out) && spec.default !== undefined) {
       if (!typeMatches(spec, spec.default)) {
         throw new TalariaError('INTERNAL', `Default for toolArg "${key}" has wrong type`);
+      }
+      if (
+        typeof spec.default === 'string' &&
+        spec.choices &&
+        !spec.choices.includes(spec.default)
+      ) {
+        throw new TalariaError('INTERNAL', `Default for toolArg "${key}" is not an allowed choice`);
       }
       out[key] = spec.default;
     }

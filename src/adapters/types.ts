@@ -35,6 +35,8 @@ export interface SpawnConfig {
 export interface AcceptedArgSpec {
   type: 'string' | 'number' | 'boolean' | 'string[]';
   default?: unknown;
+  /** Optional allowlist for string-valued arguments. */
+  choices?: readonly string[];
   description: string;
 }
 

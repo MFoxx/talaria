@@ -67,20 +67,40 @@ describe('claude-code adapter', () => {
 });
 
 describe('codex adapter', () => {
-  it('defaults approval mode to full-auto with prompt last', () => {
+  it('uses non-interactive exec with a workspace-write sandbox by default', () => {
     const spawn = codexAdapter.buildSpawn({ ...base, prompt: 'go', toolArgs: {} });
     expect(spawn.bin).toBe('codex');
-    expect(spawn.args).toEqual(['--quiet', '--approval-mode', 'full-auto', 'go']);
+    expect(spawn.args).toEqual(['exec', '--sandbox', 'workspace-write', 'go']);
   });
 
-  it('overrides approval mode without duplicating the flag', () => {
+  it('maps supported sandbox and model arguments', () => {
     const spawn = codexAdapter.buildSpawn({
       ...base,
       prompt: 'go',
-      toolArgs: { approvalMode: 'suggest', model: 'o4' },
+      toolArgs: { sandbox: 'read-only', model: 'o4' },
     });
-    expect(spawn.args).toEqual(['--quiet', '--approval-mode', 'suggest', '--model', 'o4', 'go']);
-    expect(spawn.args.filter((a) => a === '--approval-mode')).toHaveLength(1);
+    expect(spawn.args).toEqual(['exec', '--sandbox', 'read-only', '--model', 'o4', 'go']);
+    expect(spawn.args.filter((a) => a === '--sandbox')).toHaveLength(1);
+  });
+
+  it('rejects unsupported sandbox values', () => {
+    expect(() =>
+      codexAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { sandbox: 'unrestricted-ish' },
+      }),
+    ).toThrow(/must be one of: read-only, workspace-write, danger-full-access/);
+  });
+
+  it('rejects the removed approvalMode argument', () => {
+    expect(() =>
+      codexAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { approvalMode: 'full-auto' },
+      }),
+    ).toThrow(/Unknown toolArg "approvalMode"/);
   });
 });
 
@@ -126,6 +146,15 @@ describe('validateToolArgs', () => {
       {},
     );
     expect(out).toEqual({ mode: 'auto' });
+  });
+
+  it('rejects string values outside declared choices', () => {
+    expect(() =>
+      validateToolArgs(
+        { mode: { type: 'string', choices: ['safe', 'fast'], description: '' } },
+        { mode: 'surprise' },
+      ),
+    ).toThrow(/must be one of: safe, fast/);
   });
 
   it('accepts each supported type', () => {
