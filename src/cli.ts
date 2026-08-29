@@ -126,7 +126,7 @@ export function buildProgram(): Command {
     )
     .option(
       '--tool <name>',
-      'built-in server tool (repeatable: claude-code | codex | cursor)',
+      'built-in server tool (repeatable: claude-code | codex | cursor | grok)',
       collect,
       [],
     )

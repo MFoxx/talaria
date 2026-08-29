@@ -37,4 +37,16 @@ describe('setup runtime resolution', () => {
     expect(runtime.builtinToolBins).toEqual({ codex: '/opt/codex/bin/codex' });
     expect(commands).toEqual([]);
   });
+
+  it('resolves and pins the Grok Build executable', async () => {
+    const runtime = await resolveSetupRuntime({
+      tools: ['grok'],
+      nodePath: '/opt/node/bin/node',
+      cliPath: '/opt/talaria/dist/cli.js',
+      builtinToolBins: { grok: '/opt/grok/bin/grok' },
+      run: () => Promise.resolve(ok),
+    });
+    expect(runtime.builtinToolBins).toEqual({ grok: '/opt/grok/bin/grok' });
+    expect(runtime.serviceExecutablePath.split(':')[0]).toBe('/opt/grok/bin');
+  });
 });
