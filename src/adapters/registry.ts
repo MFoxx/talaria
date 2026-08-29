@@ -2,8 +2,9 @@
  * Adapter registry (ARCHITECTURE §7).
  *
  * The registry is the authoritative allowlist of usable tools: a tool is available only
- * if its name appears in `config.tools`. Built-in adapters (`claude-code`, `codex`) and
- * generic adapters (from `customTools`) are assembled here and looked up by name.
+ * if its name appears in `config.tools`. Built-in adapters (`claude-code`, `codex`,
+ * `cursor`) and generic adapters (from `customTools`) are assembled here and looked up by
+ * name.
  */
 
 import { TalariaError } from '../protocol/errors.js';
@@ -11,6 +12,7 @@ import type { ToolInfo } from '../protocol/messages.js';
 import type { ServerConfig } from '../config/server-config.js';
 import { createClaudeCodeAdapter } from './claude-code.js';
 import { createCodexAdapter } from './codex.js';
+import { createCursorAdapter } from './cursor.js';
 import { createGenericAdapter } from './generic.js';
 import type { ToolAdapter } from './types.js';
 
@@ -29,6 +31,7 @@ export class AdapterRegistry {
     const builtins: Record<string, ToolAdapter> = {
       'claude-code': createClaudeCodeAdapter(config.builtinToolBins['claude-code']),
       codex: createCodexAdapter(config.builtinToolBins.codex),
+      cursor: createCursorAdapter(config.builtinToolBins.cursor),
     };
     const customByName = new Map(config.customTools.map((t) => [t.name, t]));
     const adapters = new Map<string, ToolAdapter>();

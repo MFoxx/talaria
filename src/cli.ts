@@ -105,7 +105,12 @@ export function buildProgram(): Command {
     .option('--ssh-user <user>', 'SSH user on the server')
     .option('--host-alias <alias>', 'client config host alias')
     .option('--allowed-dir <path>', 'allowed directory prefix (repeatable)', collect, [])
-    .option('--tool <name>', 'built-in server tool (repeatable: claude-code | codex)', collect, [])
+    .option(
+      '--tool <name>',
+      'built-in server tool (repeatable: claude-code | codex | cursor)',
+      collect,
+      [],
+    )
     .option('--skip-keygen', 'do not generate an SSH key')
     .option('--force', 'overwrite existing config files')
     .action((opts: SetupCliOptions) => setupAction(opts));

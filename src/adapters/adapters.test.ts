@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { claudeCodeAdapter } from './claude-code.js';
 import { codexAdapter } from './codex.js';
+import { cursorAdapter } from './cursor.js';
 import { createGenericAdapter } from './generic.js';
 import { validateToolArgs } from './args.js';
 import { isTalariaError } from '../protocol/errors.js';
@@ -115,6 +116,53 @@ describe('codex adapter', () => {
         toolArgs: { approvalMode: 'full-auto' },
       }),
     ).toThrow(/Unknown toolArg "approvalMode"/);
+  });
+});
+
+describe('cursor adapter', () => {
+  it('uses print mode with structured streaming output by default', () => {
+    const spawn = cursorAdapter.buildSpawn({ ...base, prompt: 'go', toolArgs: {} });
+    expect(spawn.bin).toBe('agent');
+    expect(spawn.args).toEqual(['-p', '--output-format', 'stream-json', 'go']);
+  });
+
+  it('maps force and model arguments before the prompt', () => {
+    const spawn = cursorAdapter.buildSpawn({
+      ...base,
+      prompt: 'go',
+      toolArgs: { force: true, model: 'claude-opus' },
+    });
+    expect(spawn.args).toEqual([
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--force',
+      '--model',
+      'claude-opus',
+      'go',
+    ]);
+  });
+
+  it('omits --force when not requested', () => {
+    const spawn = cursorAdapter.buildSpawn({
+      ...base,
+      prompt: 'go',
+      toolArgs: { force: false },
+    });
+    expect(spawn.args).not.toContain('--force');
+  });
+
+  it('keeps an injection attempt as a single argv element', () => {
+    const nasty = '"; rm -rf / #';
+    const spawn = cursorAdapter.buildSpawn({ ...base, prompt: nasty, toolArgs: {} });
+    expect(spawn.args[spawn.args.length - 1]).toBe(nasty);
+    expect(spawn.args.filter((a) => a === nasty)).toHaveLength(1);
+  });
+
+  it('rejects an unknown toolArg', () => {
+    expect(() =>
+      cursorAdapter.buildSpawn({ ...base, prompt: 'p', toolArgs: { sandbox: 'read-only' } }),
+    ).toThrow(/Unknown toolArg "sandbox"/);
   });
 });
 

@@ -29,7 +29,7 @@ Install on **both** machines: the agent server (VPS) and the workstation (target
 Talaria supports two SSH transports. `openssh` is the default and preserves the
 strongest command-level isolation. `tailscale-ssh` removes key distribution and host-key
 management, with the security tradeoff described below. Install Talaria, tmux, and the
-enabled tools (`claude`, `codex`, and so on) on the workstation in both modes.
+enabled tools (`claude`, `codex`, `agent`, and so on) on the workstation in both modes.
 
 Run the guided setup on each machine:
 
@@ -98,8 +98,8 @@ talaria setup
 
 Running server setup directly through `tsx src/cli.ts` is rejected because plain Node
 cannot execute that TypeScript source when sshd later invokes the forced command.
-Use `--tool codex` or `--tool claude-code` to enable only that built-in; repeat the flag
-to enable both. When omitted, setup enables and pins both tools.
+Use `--tool codex`, `--tool claude-code`, or `--tool cursor` to enable only that built-in;
+repeat the flag to enable several. When omitted, setup enables and pins claude-code and codex.
 Server configs created before executable pinning must be regenerated with
 `talaria setup --role server --force`.
 

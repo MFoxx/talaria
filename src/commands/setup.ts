@@ -540,8 +540,8 @@ async function configureServer(context: SetupWorkflowContext): Promise<string> {
       ];
   const tools = opts.tool?.length ? opts.tool : ['claude-code', 'codex'];
   for (const tool of tools) {
-    if (tool !== 'claude-code' && tool !== 'codex') {
-      throw new Error(`Unsupported setup tool ${tool}; expected claude-code or codex`);
+    if (tool !== 'claude-code' && tool !== 'codex' && tool !== 'cursor') {
+      throw new Error(`Unsupported setup tool ${tool}; expected claude-code, codex, or cursor`);
     }
   }
   const runtime: SetupRuntime = await resolveSetupRuntime({

@@ -4,12 +4,13 @@ import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { runCommand } from '../util/exec.js';
 
-export type BuiltinToolName = 'claude-code' | 'codex';
+export type BuiltinToolName = 'claude-code' | 'codex' | 'cursor';
 export type BuiltinToolBins = Partial<Record<BuiltinToolName, string>>;
 
 const TOOL_COMMANDS: Record<BuiltinToolName, string> = {
   'claude-code': 'claude',
   codex: 'codex',
+  cursor: 'agent',
 };
 
 const SYSTEM_PATH_DIRS = [
@@ -94,7 +95,8 @@ export async function resolveSetupRuntime(
   }
 
   const configuredBuiltins = options.tools.filter(
-    (name): name is BuiltinToolName => name === 'claude-code' || name === 'codex',
+    (name): name is BuiltinToolName =>
+      name === 'claude-code' || name === 'codex' || name === 'cursor',
   );
   const entries = await Promise.all(
     configuredBuiltins.map(async (name) => {
