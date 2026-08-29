@@ -135,7 +135,9 @@ access, it displays the complete change plan. The provisioner then:
 
 - installs a root-owned login shell that accepts only the exact `talaria serve` command;
 - creates `talaria-projects`, adds the current user and service account, and applies
-  recursive group access plus inherited ACLs only to the selected project directories;
+  recursive group access plus inherited ACLs to the selected project directories;
+- adds search-only ACLs (no directory listing or file reading) to private parent
+  directories when needed to reach a selected project path;
 - writes `/Users/talaria/.config/talaria/server.json` and private session state owned by
   the service account; and
 - verifies Node, the Talaria CLI, `claude`, and `codex` as the service account.

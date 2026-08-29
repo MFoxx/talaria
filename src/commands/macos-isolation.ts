@@ -24,6 +24,19 @@ const TALARIA_CONFIG_DIR = path.join(TALARIA_HOME, '.config', 'talaria');
 const TALARIA_CONFIG_FILE = path.join(TALARIA_CONFIG_DIR, 'server.json');
 const TALARIA_DATA_DIR = path.join(TALARIA_HOME, '.local', 'share', 'talaria');
 const TALARIA_SESSION_DIR = path.join(TALARIA_DATA_DIR, 'sessions');
+const BROAD_SYSTEM_DIRS = new Set([
+  '/',
+  '/Applications',
+  '/Library',
+  '/System',
+  '/Users',
+  '/bin',
+  '/etc',
+  '/private',
+  '/sbin',
+  '/usr',
+  '/var',
+]);
 
 type CommandRunner = typeof runCommand;
 interface InteractiveCommandOptions {
@@ -56,6 +69,7 @@ export interface MacOsIsolationPlan extends MacOsIsolationOptions {
   shellPath: typeof TALARIA_SHELL;
   configPath: typeof TALARIA_CONFIG_FILE;
   stateDir: typeof TALARIA_DATA_DIR;
+  traverseDirs: string[];
   path: string;
   summary: string[];
 }
@@ -83,26 +97,31 @@ function normalizeAllowedDirs(dirs: string[]): string[] {
       throw new Error(`Project directory does not exist or is not a directory: ${dir}`);
     }
     const resolved = realpathSync(dir);
-    const unsafeRoots = new Set([
-      '/',
-      '/Applications',
-      '/Library',
-      '/System',
-      '/Users',
-      '/bin',
-      '/etc',
-      '/private',
-      '/sbin',
-      '/usr',
-      '/var',
-    ]);
-    if (unsafeRoots.has(resolved)) {
+    if (BROAD_SYSTEM_DIRS.has(resolved)) {
       throw new Error(
         `Refusing recursive group and ACL changes on broad system directory: ${resolved}`,
       );
     }
     return resolved;
   });
+}
+
+function requiredTraverseDirs(dirs: string[]): string[] {
+  const ancestors = new Set<string>();
+  for (const directory of dirs) {
+    for (
+      let ancestor = path.dirname(directory);
+      ancestor !== '/';
+      ancestor = path.dirname(ancestor)
+    ) {
+      if (!BROAD_SYSTEM_DIRS.has(ancestor) && (statSync(ancestor).mode & 0o001) === 0) {
+        ancestors.add(ancestor);
+      }
+    }
+  }
+  return [...ancestors].sort(
+    (left, right) => left.split(path.sep).length - right.split(path.sep).length,
+  );
 }
 
 /** Build a displayable, immutable plan before asking for administrator access. */
@@ -123,6 +142,7 @@ export function createMacOsIsolationPlan(options: MacOsIsolationOptions): MacOsI
     ? path.join(TALARIA_SERVICE_APP, path.relative(sourceAppRoot, sourceCliPath))
     : sourceCliPath;
   const allowedDirs = normalizeAllowedDirs(options.allowedDirs);
+  const traverseDirs = requiredTraverseDirs(allowedDirs);
   const pathEntries = [
     ...options.executablePath.split(path.delimiter),
     path.dirname(nodePath),
@@ -156,6 +176,7 @@ export function createMacOsIsolationPlan(options: MacOsIsolationOptions): MacOsI
     shellPath: TALARIA_SHELL,
     configPath: TALARIA_CONFIG_FILE,
     stateDir: TALARIA_DATA_DIR,
+    traverseDirs,
     path: executablePath,
     summary: [
       `Create or verify the hidden, non-admin ${TALARIA_ACCOUNT} account with password login disabled`,
@@ -168,6 +189,9 @@ export function createMacOsIsolationPlan(options: MacOsIsolationOptions): MacOsI
         : []),
       `Create ${TALARIA_PROJECT_GROUP} and add ${options.controllerUser} and ${TALARIA_ACCOUNT}`,
       `Grant that group inherited read/write access to: ${allowedDirs.join(', ')}`,
+      ...(traverseDirs.length > 0
+        ? [`Grant ${TALARIA_ACCOUNT} search-only traversal through: ${traverseDirs.join(', ')}`]
+        : []),
       `Install server config and private session state below ${TALARIA_HOME}`,
       'Verify the dedicated account can read Node/Talaria and execute the configured tool CLIs',
     ],
@@ -432,6 +456,14 @@ async function grantProjectAccess(
   deps: MacOsIsolationDependencies,
 ): Promise<void> {
   const inheritedAcl = `group:${plan.group} allow read,write,execute,delete,append,list,search,readattr,readextattr,readsecurity,add_file,add_subdirectory,delete_child,writeattr,writeextattr,file_inherit,directory_inherit`;
+  for (const ancestor of plan.traverseDirs) {
+    await checkedPrivileged(
+      deps,
+      '/bin/chmod',
+      ['+a', `user:${plan.account} allow search`, ancestor],
+      `Granting search-only access through ${ancestor}`,
+    );
+  }
   for (const directory of plan.allowedDirs) {
     await checkedPrivileged(
       deps,
@@ -517,12 +549,16 @@ async function verifyProjectAccess(
   deps: MacOsIsolationDependencies,
 ): Promise<void> {
   for (const directory of plan.allowedDirs) {
-    for (const mode of ['-r', '-w', '-x']) {
+    for (const [mode, access] of [
+      ['-r', 'read'],
+      ['-w', 'write'],
+      ['-x', 'search'],
+    ] as const) {
       await checked(
         deps.runInteractive,
         '/usr/bin/sudo',
         ['-u', plan.account, '/bin/test', mode, directory],
-        `Verifying project access to ${directory}`,
+        `Verifying project ${access} access to ${directory}`,
       );
     }
   }

@@ -161,6 +161,15 @@ describe('macOS Tailscale SSH isolation', () => {
     ).toBe(true);
     expect(commands).toContainEqual({
       bin: '/usr/bin/sudo',
+      args: [
+        '/bin/chmod',
+        '+a',
+        'user:talaria allow search',
+        path.dirname(isolationPlan.allowedDirs[0] ?? ''),
+      ],
+    });
+    expect(commands).toContainEqual({
+      bin: '/usr/bin/sudo',
       args: ['-u', 'talaria', '/bin/test', '-x', '/opt/homebrew/bin/node'],
     });
     expect(
