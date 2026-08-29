@@ -1,9 +1,9 @@
 /**
  * Client transport (ARCHITECTURE §10).
  *
- * One SSH connection per command: spawn `ssh … talaria serve`, write a single JSONL
- * request to its stdin, and stream JSONL responses back from its stdout. No SSH library —
- * just `child_process.spawn` (§10).
+ * One SSH connection per command: spawn either OpenSSH or `tailscale ssh`, invoke
+ * `talaria serve`, write one JSONL request to stdin, and stream JSONL responses back.
+ * No SSH library — just `child_process.spawn` (§10).
  *
  * The transport is built around an injectable {@link Connector} so the same request/parse
  * logic can be driven either over real SSH or, in tests, over in-process pipes wired
@@ -23,6 +23,8 @@ export interface Channel {
   stdin: Writable;
   stdout: Readable;
   stderr?: Readable;
+  /** Human-readable executable name for connection errors. */
+  label?: string;
   /** Resolves when the underlying process exits. */
   exit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
@@ -30,22 +32,37 @@ export interface Channel {
 /** Opens a fresh channel (one SSH connection). */
 export type Connector = () => Channel;
 
-/** SSH connection parameters. */
-export interface SshTarget {
+/** Traditional OpenSSH connection parameters. */
+export interface OpenSshTarget {
+  transport?: 'openssh';
   tailscaleHost: string;
   sshUser: string;
   sshKey: string;
   sshOptions?: string[];
 }
 
-/** The remote forced command; the server ignores the argument but we still pass it. */
+/** Tailscale SSH connection parameters. Authentication comes from the tailnet identity. */
+export interface TailscaleSshTarget {
+  transport: 'tailscale-ssh';
+  tailscaleHost: string;
+  sshUser: string;
+  /** Exact remote command; useful when `talaria` is not on the non-interactive PATH. */
+  serverCommand?: string;
+}
+
+export type RemoteTarget = OpenSshTarget | TailscaleSshTarget;
+
+/** Backward-compatible name for the original OpenSSH target interface. */
+export type SshTarget = OpenSshTarget;
+
+/** The command requested on the remote SSH server. */
 export const REMOTE_COMMAND = 'talaria serve';
 
 /**
  * Build the argv for `ssh`. BatchMode disables interactive prompts so a bad key fails
  * fast instead of hanging.
  */
-export function buildSshArgs(target: SshTarget, remoteCommand = REMOTE_COMMAND): string[] {
+export function buildSshArgs(target: OpenSshTarget, remoteCommand = REMOTE_COMMAND): string[] {
   return [
     '-i',
     target.sshKey,
@@ -57,19 +74,55 @@ export function buildSshArgs(target: SshTarget, remoteCommand = REMOTE_COMMAND):
   ];
 }
 
-/** A {@link Connector} that opens a real SSH connection. */
-export function sshConnector(target: SshTarget, sshBinary = 'ssh'): Connector {
+/** Build argv for Tailscale's optional wrapper around the system SSH client. */
+export function buildTailscaleSshArgs(
+  target: TailscaleSshTarget,
+  remoteCommand = target.serverCommand ?? REMOTE_COMMAND,
+): string[] {
+  return ['ssh', `${target.sshUser}@${target.tailscaleHost}`, remoteCommand];
+}
+
+function spawnConnector(bin: string, args: string[]): Connector {
   return () => {
-    const child = spawn(sshBinary, buildSshArgs(target), { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+      let settled = false;
+      const finish = (code: number | null, signal: NodeJS.Signals | null): void => {
+        if (settled) return;
+        settled = true;
+        resolve({ code, signal });
+      };
+      child.once('error', () => finish(127, null));
+      child.once('exit', finish);
+    });
     return {
       stdin: child.stdin,
       stdout: child.stdout,
       stderr: child.stderr,
-      exit: new Promise((resolve) => {
-        child.on('exit', (code, signal) => resolve({ code, signal }));
-      }),
+      label: bin,
+      exit,
     };
   };
+}
+
+/** A {@link Connector} that opens a real SSH connection. */
+export function sshConnector(target: OpenSshTarget, sshBinary = 'ssh'): Connector {
+  return spawnConnector(sshBinary, buildSshArgs(target));
+}
+
+/** A {@link Connector} that delegates authentication and host keys to Tailscale SSH. */
+export function tailscaleSshConnector(
+  target: TailscaleSshTarget,
+  tailscaleBinary = 'tailscale',
+): Connector {
+  return spawnConnector(tailscaleBinary, buildTailscaleSshArgs(target));
+}
+
+/** Select the concrete SSH adapter at the transport seam. */
+export function remoteConnector(target: RemoteTarget): Connector {
+  return target.transport === 'tailscale-ssh'
+    ? tailscaleSshConnector(target)
+    : sshConnector(target);
 }
 
 export class Transport {
@@ -102,9 +155,10 @@ export class Transport {
 
     const { code } = await channel.exit;
     if (count === 0 && code !== 0) {
+      const label = channel.label ?? 'ssh';
       throw new TalariaError(
         'INTERNAL',
-        `Connection failed (ssh exit ${code})${stderr.trim() ? `: ${stderr.trim()}` : ''}`,
+        `Connection failed (${label} exit ${code})${stderr.trim() ? `: ${stderr.trim()}` : ''}`,
       );
     }
   }

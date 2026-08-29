@@ -21,7 +21,7 @@ export function makeClient(opts: { host?: string; output?: OutputFormat }): Reso
   const config = loadClientConfig();
   const host = resolveHost(config, opts.host);
   return {
-    client: TalariaClient.overSsh(host),
+    client: TalariaClient.overRemote(host),
     hostAlias: host.alias,
     defaultTimeout: config.defaultTimeout,
     format: opts.output ?? config.outputFormat,

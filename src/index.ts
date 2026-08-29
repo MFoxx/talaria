@@ -18,10 +18,16 @@ export * from './config/client-config.js';
 export { TalariaClient, type RunOptions, type AttachOptions } from './client/talaria-client.js';
 export {
   Transport,
+  remoteConnector,
   sshConnector,
+  tailscaleSshConnector,
   buildSshArgs,
+  buildTailscaleSshArgs,
   type Connector,
   type Channel,
+  type RemoteTarget,
+  type OpenSshTarget,
   type SshTarget,
+  type TailscaleSshTarget,
 } from './client/transport.js';
 export { OffsetStore } from './client/offsets.js';

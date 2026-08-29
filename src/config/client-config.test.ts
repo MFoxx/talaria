@@ -28,8 +28,11 @@ describe('parseClientConfig', () => {
 
   it('accepts the spec example and expands the ssh key path', () => {
     const cfg = parseClientConfig(example, { home });
-    expect(cfg.hosts.desktop?.sshKey).toBe('/home/me/.ssh/talaria_agent_ed25519');
-    expect(cfg.hosts.desktop?.sshOptions).toEqual(['-o', 'ConnectTimeout=10']);
+    const host = cfg.hosts.desktop;
+    expect(host?.transport).toBe('openssh');
+    if (host?.transport !== 'openssh') throw new Error('expected OpenSSH host');
+    expect(host.sshKey).toBe('/home/me/.ssh/talaria_agent_ed25519');
+    expect(host.sshOptions).toEqual(['-o', 'ConnectTimeout=10']);
     expect(cfg.defaultHost).toBe('desktop');
   });
 
@@ -37,7 +40,43 @@ describe('parseClientConfig', () => {
     const cfg = parseClientConfig({
       hosts: { h: { tailscaleHost: 't', sshUser: 'u', sshKey: '/k' } },
     });
-    expect(cfg.hosts.h?.sshOptions).toEqual([]);
+    const host = cfg.hosts.h;
+    expect(host?.transport).toBe('openssh');
+    if (host?.transport !== 'openssh') throw new Error('expected OpenSSH host');
+    expect(host.sshOptions).toEqual([]);
+  });
+
+  it('accepts Tailscale SSH without a key', () => {
+    const cfg = parseClientConfig({
+      hosts: {
+        h: {
+          transport: 'tailscale-ssh',
+          tailscaleHost: 'workstation',
+          sshUser: 'talaria',
+        },
+      },
+    });
+    expect(cfg.hosts.h).toEqual({
+      transport: 'tailscale-ssh',
+      tailscaleHost: 'workstation',
+      sshUser: 'talaria',
+      serverCommand: 'talaria serve',
+    });
+  });
+
+  it('rejects transport-specific fields on the wrong transport', () => {
+    expect(() =>
+      parseClientConfig({
+        hosts: {
+          h: {
+            transport: 'tailscale-ssh',
+            tailscaleHost: 'workstation',
+            sshUser: 'talaria',
+            sshKey: '/must-not-be-used',
+          },
+        },
+      }),
+    ).toThrow();
   });
 
   it('rejects a defaultHost that is not defined', () => {
@@ -57,6 +96,7 @@ describe('resolveHost', () => {
     const host = resolveHost(cfg, 'desktop');
     expect(host.alias).toBe('desktop');
     expect(host.tailscaleHost).toBe('my-workstation');
+    expect(host.transport).toBe('openssh');
   });
 
   it('falls back to defaultHost when no alias is given', () => {

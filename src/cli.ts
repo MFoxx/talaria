@@ -34,7 +34,7 @@ export function buildProgram(): Command {
   const program = new Command();
   program
     .name('talaria')
-    .description('Structured remote tool execution over Tailscale SSH')
+    .description('Structured remote tool execution over SSH carried by Tailscale')
     .version(VERSION);
 
   program
@@ -95,9 +95,11 @@ export function buildProgram(): Command {
 
   program
     .command('setup')
-    .description('Generate an SSH key, write default configs, and print the authorized_keys line')
+    .description('Configure OpenSSH or Tailscale SSH transport and write default configs')
     .option('--role <role>', 'server | client | both', 'both')
+    .option('--transport <transport>', 'openssh | tailscale-ssh', 'openssh')
     .option('--key <path>', 'SSH key path')
+    .option('--server-command <command>', 'exact remote command for Tailscale SSH')
     .option('-H, --host <host>', 'Tailscale hostname of the workstation')
     .option('--ssh-user <user>', 'SSH user on the workstation')
     .option('--host-alias <alias>', 'client config host alias', 'desktop')

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { TalariaClient } from './talaria-client.js';
-import { buildSshArgs, type Connector } from './transport.js';
+import { buildSshArgs, buildTailscaleSshArgs, type Connector } from './transport.js';
 import { buildContext, serveConnection } from '../server/serve.js';
 import { parseServerConfig } from '../config/server-config.js';
 import type { HandlerContext } from '../server/handlers.js';
@@ -127,5 +127,24 @@ describe('buildSshArgs', () => {
       'user@workstation',
       'talaria serve',
     ]);
+  });
+
+  it('assembles tailscale ssh argv without a private key', () => {
+    const args = buildTailscaleSshArgs({
+      transport: 'tailscale-ssh',
+      tailscaleHost: 'workstation',
+      sshUser: 'user',
+    });
+    expect(args).toEqual(['ssh', 'user@workstation', 'talaria serve']);
+  });
+
+  it('supports an explicit Tailscale SSH server command', () => {
+    const args = buildTailscaleSshArgs({
+      transport: 'tailscale-ssh',
+      tailscaleHost: 'workstation',
+      sshUser: 'user',
+      serverCommand: '/opt/talaria/bin/talaria serve',
+    });
+    expect(args).toEqual(['ssh', 'user@workstation', '/opt/talaria/bin/talaria serve']);
   });
 });

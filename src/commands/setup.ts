@@ -1,9 +1,9 @@
 /**
  * `talaria setup` (ARCHITECTURE §9.3, §11).
  *
- * Bootstraps a machine: generates a dedicated SSH key, writes default server/client
- * configs, prints the locked-down `authorized_keys` forced-command line, and reports
- * whether tmux and the tools are installed.
+ * Bootstraps a machine for either OpenSSH or Tailscale SSH. OpenSSH generates a
+ * dedicated key and prints a locked-down `authorized_keys` line; Tailscale SSH delegates
+ * authentication to the tailnet and prints the required host/policy guidance.
  *
  * The pure builders (config objects, authorized_keys line) are unit-tested; the action
  * wires them to the filesystem and `ssh-keygen`.
@@ -13,7 +13,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { clientConfigPath, serverConfigPath } from '../config/paths.js';
-import { parseClientConfig } from '../config/client-config.js';
+import {
+  parseClientConfig,
+  TransportKind,
+  type TransportKind as TransportKindType,
+} from '../config/client-config.js';
 import { parseServerConfig } from '../config/server-config.js';
 import { AdapterRegistry } from '../adapters/registry.js';
 import { isTmuxAvailable } from '../server/tmux.js';
@@ -50,21 +54,40 @@ export function buildServerConfig(opts: {
   };
 }
 
-/** Default client config object (validated before it's written). */
-export function buildClientConfig(opts: {
+interface CommonClientConfigOptions {
   hostAlias: string;
   tailscaleHost: string;
   sshUser: string;
-  sshKey: string;
-}): Record<string, unknown> {
+}
+
+export type BuildClientConfigOptions = CommonClientConfigOptions &
+  (
+    | { transport?: 'openssh'; sshKey: string; serverCommand?: never }
+    | { transport: 'tailscale-ssh'; sshKey?: never; serverCommand?: string }
+  );
+
+/** Default client config object (validated before it's written). */
+export function buildClientConfig(opts: BuildClientConfigOptions): Record<string, unknown> {
+  const transport = opts.transport ?? 'openssh';
+  const host =
+    transport === 'tailscale-ssh'
+      ? {
+          transport,
+          tailscaleHost: opts.tailscaleHost,
+          sshUser: opts.sshUser,
+          ...(opts.serverCommand ? { serverCommand: opts.serverCommand } : {}),
+        }
+      : {
+          transport,
+          tailscaleHost: opts.tailscaleHost,
+          sshUser: opts.sshUser,
+          sshKey: opts.sshKey,
+          sshOptions: ['-o', 'ConnectTimeout=10'],
+        };
+
   return {
     hosts: {
-      [opts.hostAlias]: {
-        tailscaleHost: opts.tailscaleHost,
-        sshUser: opts.sshUser,
-        sshKey: opts.sshKey,
-        sshOptions: ['-o', 'ConnectTimeout=10'],
-      },
+      [opts.hostAlias]: host,
     },
     defaultHost: opts.hostAlias,
     defaultTimeout: 600,
@@ -76,7 +99,9 @@ export type SetupRole = 'server' | 'client' | 'both';
 
 export interface SetupCliOptions {
   role?: SetupRole;
+  transport?: TransportKindType;
   key?: string;
+  serverCommand?: string;
   host?: string;
   sshUser?: string;
   hostAlias?: string;
@@ -85,6 +110,8 @@ export interface SetupCliOptions {
   force?: boolean;
   /** Environment for path resolution (tests). */
   env?: NodeJS.ProcessEnv;
+  /** Home directory override (tests). */
+  home?: string;
 }
 
 function writeJsonFile(filePath: string, value: unknown): void {
@@ -103,7 +130,20 @@ export async function setupAction(opts: SetupCliOptions = {}, io: Io = defaultIo
   if (!['server', 'client', 'both'].includes(role)) {
     throw new Error(`Invalid --role "${role}"; expected server, client, or both`);
   }
-  const home = os.homedir();
+  const transportResult = TransportKind.safeParse(opts.transport ?? 'openssh');
+  if (!transportResult.success) {
+    throw new Error(
+      `Invalid --transport "${String(opts.transport)}"; expected openssh or tailscale-ssh`,
+    );
+  }
+  const transport = transportResult.data;
+  if (transport === 'tailscale-ssh' && opts.key !== undefined) {
+    throw new Error('--key applies only to the openssh transport');
+  }
+  if (transport === 'openssh' && opts.serverCommand !== undefined) {
+    throw new Error('--server-command applies only to the tailscale-ssh transport');
+  }
+  const home = opts.home ?? os.homedir();
   const doServer = role === 'server' || role === 'both';
   const doClient = role === 'client' || role === 'both';
 
@@ -137,10 +177,14 @@ export async function setupAction(opts: SetupCliOptions = {}, io: Io = defaultIo
           : `  ✗ ${info.name} — ${info.error ?? 'unavailable'}`,
       );
     }
+
+    if (transport === 'tailscale-ssh') {
+      io.errLine('  • enable Tailscale SSH on this workstation: tailscale set --ssh=true');
+    }
   }
 
   if (doClient) {
-    if (!opts.skipKeygen && !existsSync(keyPath)) {
+    if (transport === 'openssh' && !opts.skipKeygen && !existsSync(keyPath)) {
       mkdirSync(path.dirname(keyPath), { recursive: true });
       const result = await runCommand('ssh-keygen', [
         '-t',
@@ -156,16 +200,23 @@ export async function setupAction(opts: SetupCliOptions = {}, io: Io = defaultIo
         throw new Error(`ssh-keygen failed: ${result.stderr.trim() || `exit ${result.code}`}`);
       }
       io.errLine(`  ✓ generated SSH key ${keyPath}`);
-    } else if (existsSync(keyPath)) {
+    } else if (transport === 'openssh' && existsSync(keyPath)) {
       io.errLine(`  • SSH key exists at ${keyPath}`);
     }
 
-    const clientConfig = buildClientConfig({
+    const common = {
       hostAlias: opts.hostAlias ?? 'desktop',
       tailscaleHost: opts.host ?? 'my-workstation',
       sshUser: opts.sshUser ?? os.userInfo().username,
-      sshKey: keyPath,
-    });
+    };
+    const clientConfig =
+      transport === 'tailscale-ssh'
+        ? buildClientConfig({
+            ...common,
+            transport,
+            ...(opts.serverCommand ? { serverCommand: opts.serverCommand } : {}),
+          })
+        : buildClientConfig({ ...common, transport, sshKey: keyPath });
     parseClientConfig(clientConfig, { home }); // validate before writing
     const target = clientConfigPath(env);
     if (existsSync(target) && !opts.force) {
@@ -174,9 +225,16 @@ export async function setupAction(opts: SetupCliOptions = {}, io: Io = defaultIo
       writeJsonFile(target, clientConfig);
       io.errLine(`  ✓ wrote client config ${target}`);
     }
+
+    if (transport === 'tailscale-ssh') {
+      io.errLine('  • no SSH key was generated; authentication uses the client tailnet identity');
+      io.errLine('  • restrict this client, workstation, and SSH user in the tailnet policy');
+    }
   }
 
-  // Print the authorized_keys line (stdout, so it can be piped/copied).
+  if (!doClient || transport === 'tailscale-ssh') return;
+
+  // OpenSSH only: print the authorized_keys line (stdout, so it can be piped/copied).
   const pubPath = `${keyPath}.pub`;
   if (existsSync(pubPath)) {
     io.errLine('\nAdd this line to ~/.ssh/authorized_keys on the workstation:');

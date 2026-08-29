@@ -16,7 +16,16 @@ import type {
   ToolArgs,
   ToolInfo,
 } from '../protocol/messages.js';
-import { Transport, sshConnector, type Connector, type SshTarget } from './transport.js';
+import {
+  remoteConnector,
+  tailscaleSshConnector,
+  Transport,
+  sshConnector,
+  type Connector,
+  type RemoteTarget,
+  type SshTarget,
+  type TailscaleSshTarget,
+} from './transport.js';
 
 export interface RunOptions {
   tool: string;
@@ -41,6 +50,16 @@ export class TalariaClient {
   /** Build a client that talks to a host over SSH. */
   static overSsh(target: SshTarget, sshBinary?: string): TalariaClient {
     return new TalariaClient(sshConnector(target, sshBinary));
+  }
+
+  /** Build a client that authenticates through Tailscale SSH. */
+  static overTailscaleSsh(target: TailscaleSshTarget, tailscaleBinary?: string): TalariaClient {
+    return new TalariaClient(tailscaleSshConnector(target, tailscaleBinary));
+  }
+
+  /** Build a client using the transport selected by a resolved host config. */
+  static overRemote(target: RemoteTarget): TalariaClient {
+    return new TalariaClient(remoteConnector(target));
   }
 
   /** Start a new session and stream its events (`started`, `output…`, `done`/`error`). */

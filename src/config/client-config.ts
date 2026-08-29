@@ -2,8 +2,8 @@
  * Client config: `~/.config/talaria/client.json` (ARCHITECTURE §8.2).
  *
  * Mirrors {@link ./server-config.ts}: `parseClientConfig` is a pure validator that
- * applies defaults and expands `~` in the SSH key path; `loadClientConfig` reads it
- * from disk. `resolveHost` turns a host alias into concrete SSH connection params.
+ * applies defaults and expands `~` in OpenSSH key paths; `loadClientConfig` reads it
+ * from disk. `resolveHost` turns a host alias into a concrete transport target.
  */
 
 import { readFileSync } from 'node:fs';
@@ -13,12 +13,30 @@ import { clientConfigPath, expandTilde } from './paths.js';
 export const OutputFormat = z.enum(['pretty', 'json', 'raw']);
 export type OutputFormat = z.infer<typeof OutputFormat>;
 
-const HostEntry = z.strictObject({
+export const TransportKind = z.enum(['openssh', 'tailscale-ssh']);
+export type TransportKind = z.infer<typeof TransportKind>;
+
+const CommonHostFields = {
   tailscaleHost: z.string().min(1),
   sshUser: z.string().min(1),
+} as const;
+
+const OpenSshHostEntry = z.strictObject({
+  transport: z.literal('openssh').default('openssh'),
+  ...CommonHostFields,
   sshKey: z.string().min(1),
   sshOptions: z.array(z.string()).default([]),
 });
+export type OpenSshHostEntry = z.infer<typeof OpenSshHostEntry>;
+
+const TailscaleSshHostEntry = z.strictObject({
+  transport: z.literal('tailscale-ssh'),
+  ...CommonHostFields,
+  serverCommand: z.string().min(1).default('talaria serve'),
+});
+export type TailscaleSshHostEntry = z.infer<typeof TailscaleSshHostEntry>;
+
+const HostEntry = z.union([TailscaleSshHostEntry, OpenSshHostEntry]);
 export type HostEntry = z.infer<typeof HostEntry>;
 
 const ClientConfigInput = z.strictObject({
@@ -28,7 +46,7 @@ const ClientConfigInput = z.strictObject({
   outputFormat: OutputFormat.default('pretty'),
 });
 
-/** Normalized client config: all defaults applied, SSH key paths expanded. */
+/** Normalized client config: all defaults applied, OpenSSH key paths expanded. */
 export interface ClientConfig {
   hosts: Record<string, HostEntry>;
   defaultHost?: string;
@@ -36,11 +54,8 @@ export interface ClientConfig {
   outputFormat: OutputFormat;
 }
 
-/** A resolved host, ready to hand to the SSH transport. */
-export interface ResolvedHost extends HostEntry {
-  /** The alias this host was looked up under. */
-  alias: string;
-}
+/** A resolved host, ready to hand to the configured transport. */
+export type ResolvedHost = HostEntry & { alias: string };
 
 export interface ParseClientConfigOptions {
   /** Home directory used for `~` expansion of the SSH key path. */
@@ -69,7 +84,10 @@ export function parseClientConfig(
 
   const hosts: Record<string, HostEntry> = {};
   for (const [alias, host] of Object.entries(cfg.hosts)) {
-    hosts[alias] = { ...host, sshKey: expandTilde(host.sshKey, options.home) };
+    hosts[alias] =
+      host.transport === 'openssh'
+        ? { ...host, sshKey: expandTilde(host.sshKey, options.home) }
+        : host;
   }
 
   return {

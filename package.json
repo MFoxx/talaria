@@ -1,7 +1,7 @@
 {
   "name": "talaria",
   "version": "0.1.0",
-  "description": "Structured remote tool execution over Tailscale SSH.",
+  "description": "Structured remote tool execution over SSH carried by Tailscale.",
   "private": true,
   "type": "module",
   "bin": {
