@@ -17,6 +17,9 @@ export const TALARIA_PROJECT_GROUP = 'talaria-projects';
 export const TALARIA_HOME = '/Users/talaria';
 export const TALARIA_SHELL = '/usr/local/libexec/talaria-shell';
 
+const TALARIA_SERVICE_DIR = '/usr/local/libexec/talaria';
+const TALARIA_SERVICE_NODE = path.join(TALARIA_SERVICE_DIR, 'node');
+const TALARIA_SERVICE_APP = path.join(TALARIA_SERVICE_DIR, 'app');
 const TALARIA_CONFIG_DIR = path.join(TALARIA_HOME, '.config', 'talaria');
 const TALARIA_CONFIG_FILE = path.join(TALARIA_CONFIG_DIR, 'server.json');
 const TALARIA_DATA_DIR = path.join(TALARIA_HOME, '.local', 'share', 'talaria');
@@ -35,6 +38,11 @@ export interface MacOsIsolationOptions {
 }
 
 export interface MacOsIsolationPlan extends MacOsIsolationOptions {
+  sourceNodePath: string;
+  stageNodeRuntime: boolean;
+  sourceCliPath: string;
+  sourceAppRoot: string;
+  stageTalariaApp: boolean;
   account: typeof TALARIA_ACCOUNT;
   group: typeof TALARIA_PROJECT_GROUP;
   home: typeof TALARIA_HOME;
@@ -95,8 +103,18 @@ export function createMacOsIsolationPlan(options: MacOsIsolationOptions): MacOsI
   if (!/^[A-Za-z_][A-Za-z0-9._-]*$/.test(options.controllerUser)) {
     throw new Error(`Invalid controller user name: ${options.controllerUser}`);
   }
-  const nodePath = requireAbsoluteFile('Node path', options.nodePath);
-  const cliPath = requireAbsoluteFile('Talaria CLI path', options.cliPath);
+  const sourceNodePath = requireAbsoluteFile('Node path', options.nodePath);
+  const sourceCliPath = requireAbsoluteFile('Talaria CLI path', options.cliPath);
+  const controllerHome = path.join('/Users', options.controllerUser);
+  const stageNodeRuntime =
+    sourceNodePath === controllerHome || sourceNodePath.startsWith(`${controllerHome}${path.sep}`);
+  const nodePath = stageNodeRuntime ? TALARIA_SERVICE_NODE : sourceNodePath;
+  const stageTalariaApp =
+    sourceCliPath === controllerHome || sourceCliPath.startsWith(`${controllerHome}${path.sep}`);
+  const sourceAppRoot = path.dirname(path.dirname(sourceCliPath));
+  const cliPath = stageTalariaApp
+    ? path.join(TALARIA_SERVICE_APP, path.relative(sourceAppRoot, sourceCliPath))
+    : sourceCliPath;
   const allowedDirs = normalizeAllowedDirs(options.allowedDirs);
   const pathEntries = [
     ...options.executablePath.split(path.delimiter),
@@ -116,6 +134,11 @@ export function createMacOsIsolationPlan(options: MacOsIsolationOptions): MacOsI
 
   return {
     ...options,
+    sourceNodePath,
+    stageNodeRuntime,
+    sourceCliPath,
+    sourceAppRoot,
+    stageTalariaApp,
     nodePath,
     cliPath,
     allowedDirs,
@@ -130,6 +153,12 @@ export function createMacOsIsolationPlan(options: MacOsIsolationOptions): MacOsI
     summary: [
       `Create or verify the hidden, non-admin ${TALARIA_ACCOUNT} account with password login disabled`,
       `Install a root-owned shell that accepts only \`talaria serve\` at ${TALARIA_SHELL}`,
+      ...(stageNodeRuntime
+        ? [`Copy the private-home Node executable to ${TALARIA_SERVICE_NODE}`]
+        : []),
+      ...(stageTalariaApp
+        ? [`Copy the private-home Talaria package to ${TALARIA_SERVICE_APP}`]
+        : []),
       `Create ${TALARIA_PROJECT_GROUP} and add ${options.controllerUser} and ${TALARIA_ACCOUNT}`,
       `Grant that group inherited read/write access to: ${allowedDirs.join(', ')}`,
       `Install server config and private session state below ${TALARIA_HOME}`,
@@ -303,6 +332,63 @@ async function installPrivateFiles(
       ['-o', 'root', '-g', 'wheel', '-m', '0755', shellSource, plan.shellPath],
       'Installing the restricted shell',
     );
+    if (plan.stageNodeRuntime) {
+      await checkedPrivileged(
+        deps,
+        '/usr/bin/install',
+        ['-d', '-o', 'root', '-g', 'wheel', '-m', '0755', TALARIA_SERVICE_DIR],
+        'Creating the service runtime directory',
+      );
+      await checkedPrivileged(
+        deps,
+        '/usr/bin/install',
+        ['-o', 'root', '-g', 'wheel', '-m', '0755', plan.sourceNodePath, plan.nodePath],
+        'Installing the service Node runtime',
+      );
+    }
+    if (plan.stageTalariaApp) {
+      await checkedPrivileged(
+        deps,
+        '/usr/bin/install',
+        ['-d', '-o', 'root', '-g', 'wheel', '-m', '0755', TALARIA_SERVICE_DIR],
+        'Creating the service application directory',
+      );
+      for (const directory of ['dist', 'node_modules']) {
+        await checkedPrivileged(
+          deps,
+          '/usr/bin/ditto',
+          [path.join(plan.sourceAppRoot, directory), path.join(TALARIA_SERVICE_APP, directory)],
+          `Installing Talaria ${directory}`,
+        );
+      }
+      await checkedPrivileged(
+        deps,
+        '/usr/bin/install',
+        [
+          '-o',
+          'root',
+          '-g',
+          'wheel',
+          '-m',
+          '0644',
+          path.join(plan.sourceAppRoot, 'package.json'),
+          path.join(TALARIA_SERVICE_APP, 'package.json'),
+        ],
+        'Installing the Talaria package manifest',
+      );
+      await checkedPrivileged(
+        deps,
+        '/usr/sbin/chown',
+        ['-R', 'root:wheel', TALARIA_SERVICE_APP],
+        'Securing Talaria application ownership',
+      );
+      await checkedPrivileged(
+        deps,
+        '/bin/chmod',
+        ['-R', 'go-w', TALARIA_SERVICE_APP],
+        'Securing Talaria application permissions',
+      );
+    }
     for (const directory of [
       plan.home,
       path.dirname(TALARIA_CONFIG_DIR),
@@ -381,6 +467,12 @@ async function verifyRuntimeAccess(
       `Verifying ${description} access`,
     );
   }
+  await checked(
+    deps.runInteractive,
+    '/usr/bin/sudo',
+    ['-u', plan.account, plan.nodePath, '--version'],
+    'Launching the Node runtime',
+  );
   for (const tool of ['claude', 'codex']) {
     await checked(
       deps.runInteractive,

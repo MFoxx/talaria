@@ -140,7 +140,10 @@ access, it displays the complete change plan. The provisioner then:
   the service account; and
 - verifies Node, the Talaria CLI, `claude`, and `codex` as the service account.
 
-The wrapper has a self-contained `PATH` and absolute paths for Node and Talaria. If a tool
+The wrapper has a self-contained `PATH` and absolute paths for Node and Talaria. When
+Node or the Talaria package is installed below the main user's private home, setup copies
+the runtime files into the root-owned `/usr/local/libexec/talaria` service directory and
+verifies that the staged Node executable can launch as `talaria`. If a tool
 is installed below a private directory that `talaria` cannot traverse, verification
 stops instead of weakening permissions on the main user's home; install that tool in a
 shared system prefix such as `/opt/homebrew` or `/usr/local` and rerun setup. Authenticate

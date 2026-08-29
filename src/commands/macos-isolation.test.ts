@@ -47,6 +47,66 @@ describe('macOS Tailscale SSH isolation', () => {
     expect(shell).toContain('/Users/alice/.local/bin');
   });
 
+  it('stages Node outside a private user home before using it in the service shell', async () => {
+    const isolationPlan = createMacOsIsolationPlan({
+      controllerUser: 'alice',
+      allowedDirs: [project],
+      serverConfig: { tools: [], allowedDirs: [project] },
+      nodePath: '/Users/alice/.nvm/versions/node/v22/bin/node',
+      cliPath: '/Users/alice/src/talaria/dist/cli.js',
+      executablePath: '/Users/alice/.nvm/versions/node/v22/bin:/usr/bin',
+    });
+
+    expect(isolationPlan.sourceNodePath).toBe('/Users/alice/.nvm/versions/node/v22/bin/node');
+    expect(isolationPlan.nodePath).toBe('/usr/local/libexec/talaria/node');
+    expect(isolationPlan.sourceCliPath).toBe('/Users/alice/src/talaria/dist/cli.js');
+    expect(isolationPlan.cliPath).toBe('/usr/local/libexec/talaria/app/dist/cli.js');
+    const shell = buildMacOsRestrictedShell(isolationPlan);
+    expect(shell).toContain(
+      "exec '/usr/local/libexec/talaria/node' '/usr/local/libexec/talaria/app/dist/cli.js'",
+    );
+    expect(shell).not.toContain("exec '/Users/alice/.nvm");
+
+    const commands: Array<{ bin: string; args: string[] }> = [];
+    await provisionMacOsIsolation(isolationPlan, {
+      getuid: () => 501,
+      run: (bin, args) =>
+        Promise.resolve(
+          bin === '/usr/bin/dscl' && args.includes('-list') ? result(0, 'alice 501\n') : result(1),
+        ),
+      runInteractive: (bin, args) => {
+        commands.push({ bin, args });
+        return Promise.resolve(0);
+      },
+    });
+    expect(commands).toContainEqual({
+      bin: '/usr/bin/sudo',
+      args: [
+        '/usr/bin/install',
+        '-o',
+        'root',
+        '-g',
+        'wheel',
+        '-m',
+        '0755',
+        '/Users/alice/.nvm/versions/node/v22/bin/node',
+        '/usr/local/libexec/talaria/node',
+      ],
+    });
+    expect(commands).toContainEqual({
+      bin: '/usr/bin/sudo',
+      args: [
+        '/usr/bin/ditto',
+        '/Users/alice/src/talaria/dist',
+        '/usr/local/libexec/talaria/app/dist',
+      ],
+    });
+    expect(commands).toContainEqual({
+      bin: '/usr/bin/sudo',
+      args: ['-u', 'talaria', '/usr/local/libexec/talaria/node', '--version'],
+    });
+  });
+
   it('uses explicit argv for account, group, ACL, install, and account-level checks', async () => {
     const commands: Array<{ bin: string; args: string[] }> = [];
     const isolationPlan = plan();
