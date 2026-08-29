@@ -370,6 +370,109 @@ describe('setupAction', () => {
     ).rejects.toThrow(/tailscaled is required/);
   });
 
+  it('provisions a dedicated macOS account for an interactive Tailscale server', async () => {
+    const prompt = new FakePrompter({}, {}, [true, true, false]);
+    const privileged: Array<{ bin: string; args: string[] }> = [];
+    const env = { XDG_CONFIG_HOME: path.join(root, 'config') };
+
+    await setupAction(
+      {
+        role: 'server',
+        transport: 'tailscale-ssh',
+        allowedDir: [root],
+        interactive: true,
+        env,
+        home: root,
+      },
+      io,
+      {
+        prompt,
+        platform: 'darwin',
+        username: 'alice',
+        nodePath: '/opt/homebrew/bin/node',
+        cliPath: '/opt/homebrew/lib/node_modules/talaria/dist/cli.js',
+        executablePath: '/opt/homebrew/bin:/usr/bin',
+        run: (bin, args) => {
+          if (bin === '/usr/bin/dscl' && args.includes('-list')) {
+            return Promise.resolve(okResult('alice 501\n'));
+          }
+          if (bin === '/usr/bin/dscl' || bin === '/usr/sbin/dseditgroup') {
+            return Promise.resolve({ ...okResult(), code: 1 });
+          }
+          return Promise.resolve(okResult());
+        },
+        runInteractive: (bin, args) => {
+          privileged.push({ bin, args });
+          return Promise.resolve(0);
+        },
+      },
+    );
+
+    expect(existsSync(path.join(root, 'config', 'talaria', 'server.json'))).toBe(false);
+    expect(
+      privileged.some(
+        ({ args }) =>
+          args[0] === '/usr/bin/install' &&
+          args.at(-1) === '/Users/talaria/.config/talaria/server.json',
+      ),
+    ).toBe(true);
+    expect(err.join('\n')).toContain('provisioned isolated talaria service account');
+    expect(err.join('\n')).toContain('"users": ["talaria"]');
+  });
+
+  it('recommends and switches to Tailscale transport when Tailscale SSH is enabled', async () => {
+    const prompt = new FakePrompter({}, {}, [true]);
+
+    await setupAction(
+      {
+        role: 'server',
+        transport: 'openssh',
+        allowedDir: [root],
+        interactive: true,
+        env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+        home: root,
+      },
+      io,
+      {
+        prompt,
+        run: (bin, args) =>
+          Promise.resolve(
+            bin === 'tailscale' && args[0] === 'debug'
+              ? okResult(JSON.stringify({ RunSSH: true }))
+              : okResult(),
+          ),
+      },
+    );
+
+    expect(err.join('\n')).toContain('Tailscale SSH is already enabled');
+    expect(err.join('\n')).toContain('bypasses OpenSSH authorized_keys');
+    expect(err.join('\n')).toContain('switched setup to Tailscale SSH');
+    expect(existsSync(path.join(root, '.ssh', 'authorized_keys'))).toBe(false);
+  });
+
+  it('stops OpenSSH setup without disabling intentional Tailscale SSH', async () => {
+    const prompt = new FakePrompter({}, {}, [false]);
+
+    await expect(
+      setupAction(
+        {
+          role: 'server',
+          transport: 'openssh',
+          allowedDir: [root],
+          interactive: true,
+          env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+          home: root,
+        },
+        io,
+        {
+          prompt,
+          run: () => Promise.resolve(okResult(JSON.stringify({ RunSSH: true }))),
+        },
+      ),
+    ).rejects.toThrow(/first run `tailscale set --ssh=false`/);
+    expect(err.join('\n')).toContain('use that transport instead');
+  });
+
   it('enables macOS Remote Login and installs the prompted controller key', async () => {
     const key = 'ssh-ed25519 AAAAPUB controller';
     const prompt = new FakePrompter({}, {}, [true, true]);

@@ -34,6 +34,12 @@ import { isTmuxAvailable } from '../server/tmux.js';
 import { BinaryNotFoundError, runCommand } from '../util/exec.js';
 import type { Io } from './actions.js';
 import { InquirerSetupPrompter, type SelectChoice, type SetupPrompter } from './setup-prompts.js';
+import {
+  createMacOsIsolationPlan,
+  provisionMacOsIsolation,
+  TALARIA_ACCOUNT,
+  type MacOsIsolationPlan,
+} from './macos-isolation.js';
 
 /** SSH forced command and restrictions applied to the agent key (§6.2). */
 export const FORCED_COMMAND = 'talaria serve';
@@ -173,6 +179,8 @@ export interface SetupDependencies {
   nodePath?: string;
   cliPath?: string;
   executablePath?: string;
+  /** Login name running setup (tests). */
+  username?: string;
 }
 
 function writeJsonFile(filePath: string, value: unknown): void {
@@ -231,6 +239,19 @@ async function binaryAvailable(bin: string, args: string[], run: CommandRunner):
   }
 }
 
+async function isTailscaleSshEnabled(run: CommandRunner): Promise<boolean | undefined> {
+  try {
+    const result = await run('tailscale', ['debug', 'prefs']);
+    if (result.code !== 0) return undefined;
+    const value: unknown = JSON.parse(result.stdout);
+    if (typeof value !== 'object' || value === null || !('RunSSH' in value)) return undefined;
+    return typeof value.RunSSH === 'boolean' ? value.RunSSH : undefined;
+  } catch (error) {
+    if (error instanceof BinaryNotFoundError || error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
+
 function publicKeyIdentity(publicKey: string): string {
   if (publicKey.includes('\n') || publicKey.includes('\r')) {
     throw new Error('Public key must be a single line');
@@ -253,6 +274,14 @@ function resolveTalariaForcedCommand(
   env: NodeJS.ProcessEnv,
   dependencies: SetupDependencies,
 ): string {
+  const runtime = resolveTalariaRuntime(env, dependencies);
+  return buildTalariaForcedCommand(runtime);
+}
+
+function resolveTalariaRuntime(
+  env: NodeJS.ProcessEnv,
+  dependencies: SetupDependencies,
+): TalariaForcedCommandOptions {
   const nodePath = dependencies.nodePath ?? realpathSync(process.execPath);
   const cliArgument = dependencies.cliPath ?? process.argv[1];
   if (!cliArgument) {
@@ -265,7 +294,7 @@ function resolveTalariaForcedCommand(
     );
   }
   const executablePath = dependencies.executablePath ?? env.PATH ?? '/usr/local/bin:/usr/bin:/bin';
-  return buildTalariaForcedCommand({ nodePath, cliPath, executablePath });
+  return { nodePath, cliPath, executablePath };
 }
 
 /** Install a controller key with Talaria's forced command and restrictive file modes. */
@@ -395,6 +424,23 @@ async function shouldWrite(
   return false;
 }
 
+function printTailscalePolicyGuidance(io: Io, sshUser: string): void {
+  io.errLine('  • add a narrow SSH rule to your tailnet policy (replace the selectors):');
+  io.errLine('    {');
+  io.errLine('      "action": "accept",');
+  io.errLine('      "src": ["group:talaria-controllers"],');
+  io.errLine('      "dst": ["tag:talaria-server"],');
+  io.errLine(`      "users": ["${sshUser}"]`);
+  io.errLine('    }');
+  io.errLine(`  • use the exact OS user ${sshUser}; do not use autogroup:nonroot`);
+  io.errLine(
+    '  ⚠ Tailscale SSH policy authenticates the connection but cannot force `talaria serve`.',
+  );
+  io.errLine(
+    '    Keep the dedicated account and restricted shell; do not grant it admin membership.',
+  );
+}
+
 export async function setupAction(
   opts: SetupCliOptions = {},
   io: Io = defaultIo,
@@ -436,7 +482,30 @@ export async function setupAction(
         `Invalid --transport "${String(requestedTransport)}"; expected openssh or tailscale-ssh`,
       );
     }
-    const transport = transportResult.data;
+    let transport = transportResult.data;
+    const doServer = role === 'server' || role === 'both';
+    const doClient = role === 'client' || role === 'both';
+    let tailscaleSshAlreadyEnabled = false;
+    if (prompt && doServer && transport === 'openssh') {
+      tailscaleSshAlreadyEnabled = (await isTailscaleSshEnabled(run)) === true;
+      if (tailscaleSshAlreadyEnabled) {
+        io.errLine('');
+        io.errLine('  ⚠ Tailscale SSH is already enabled on this server.');
+        io.errLine(
+          '    It intercepts SSH connections on the tailnet and bypasses OpenSSH authorized_keys,',
+        );
+        io.errLine("    so Talaria's forced command and key restrictions will not be applied.");
+        io.errLine('    Keeping Tailscale SSH is usually intentional; use that transport instead.');
+        if (await prompt.confirm('Switch this setup to Tailscale SSH?', true)) {
+          transport = 'tailscale-ssh';
+          io.errLine('  ✓ switched setup to Tailscale SSH');
+        } else {
+          throw new Error(
+            'OpenSSH setup cannot continue while Tailscale SSH is enabled. To intentionally use OpenSSH, first run `tailscale set --ssh=false`.',
+          );
+        }
+      }
+    }
     if (transport === 'tailscale-ssh' && opts.key !== undefined) {
       throw new Error('--key applies only to the openssh transport');
     }
@@ -444,8 +513,6 @@ export async function setupAction(
       throw new Error('--server-command applies only to the tailscale-ssh transport');
     }
 
-    const doServer = role === 'server' || role === 'both';
-    const doClient = role === 'client' || role === 'both';
     const openSshServerCommand =
       doServer && transport === 'openssh'
         ? resolveTalariaForcedCommand(env, dependencies)
@@ -501,11 +568,54 @@ export async function setupAction(
               : defaultAllowedDir,
           ];
       const serverConfig = buildServerConfig({ allowedDirs });
-      const parsedServer = parseServerConfig(serverConfig, { env, home });
-      const target = serverConfigPath(env);
-      if (await shouldWrite(target, opts.force, prompt, io)) {
-        writeJsonFile(target, serverConfig);
-        io.errLine(`  ✓ wrote server config ${target}`);
+      let isolationPlan: MacOsIsolationPlan | undefined;
+      if (transport === 'tailscale-ssh' && platform === 'darwin' && prompt) {
+        io.errLine('');
+        io.errLine('  ⚠ Tailscale SSH does not enforce an authorized_keys forced command.');
+        io.errLine(
+          '    A dedicated macOS account is recommended so Tailscale policy and OS permissions',
+        );
+        io.errLine('    contain the tools even if another SSH subsystem is exposed.');
+        if (
+          await prompt.confirm(`Create the dedicated ${TALARIA_ACCOUNT} service account?`, true)
+        ) {
+          const runtime = resolveTalariaRuntime(env, dependencies);
+          isolationPlan = createMacOsIsolationPlan({
+            controllerUser: dependencies.username ?? os.userInfo().username,
+            allowedDirs,
+            serverConfig,
+            ...runtime,
+          });
+          io.errLine('\nAdministrator changes:');
+          for (const item of isolationPlan.summary) io.errLine(`  • ${item}`);
+          if (!(await prompt.confirm('Apply these administrator changes now?', true))) {
+            throw new Error('Dedicated Tailscale SSH server setup was cancelled before changes');
+          }
+          await provisionMacOsIsolation(isolationPlan, { run, runInteractive, getuid });
+          io.errLine(`  ✓ provisioned isolated ${TALARIA_ACCOUNT} service account`);
+          io.errLine(`  ✓ wrote server config ${isolationPlan.configPath}`);
+        } else {
+          io.errLine(
+            '  ⚠ continuing as the current user; Tailscale SSH sessions are not constrained to Talaria',
+          );
+        }
+      }
+
+      const serverEnv = isolationPlan
+        ? {
+            ...env,
+            XDG_CONFIG_HOME: path.join(isolationPlan.home, '.config'),
+            XDG_DATA_HOME: path.join(isolationPlan.home, '.local', 'share'),
+          }
+        : env;
+      const serverHome = isolationPlan?.home ?? home;
+      const parsedServer = parseServerConfig(serverConfig, { env: serverEnv, home: serverHome });
+      if (!isolationPlan) {
+        const target = serverConfigPath(env);
+        if (await shouldWrite(target, opts.force, prompt, io)) {
+          writeJsonFile(target, serverConfig);
+          io.errLine(`  ✓ wrote server config ${target}`);
+        }
       }
 
       const tmuxOk = await isTmuxAvailable();
@@ -555,12 +665,25 @@ export async function setupAction(
         } else if (prompt) {
           io.errLine('  • rerun setup with --public-key after generating the key on the client');
         }
+      } else if (tailscaleSshAlreadyEnabled) {
+        io.errLine('  ✓ Tailscale SSH is already enabled');
+        printTailscalePolicyGuidance(
+          io,
+          isolationPlan?.account ?? dependencies.username ?? os.userInfo().username,
+        );
       } else if (prompt && (await prompt.confirm('Enable Tailscale SSH on this server now?'))) {
         await enableTailscaleSsh(platform, runInteractive, getuid);
         io.errLine('  ✓ Tailscale SSH enabled');
-        io.errLine('  • allow this machine and OS user in your tailnet SSH policy');
+        printTailscalePolicyGuidance(
+          io,
+          isolationPlan?.account ?? dependencies.username ?? os.userInfo().username,
+        );
       } else {
         io.errLine('  • enable Tailscale SSH later with: tailscale set --ssh=true');
+        printTailscalePolicyGuidance(
+          io,
+          isolationPlan?.account ?? dependencies.username ?? os.userInfo().username,
+        );
       }
     }
 
@@ -597,8 +720,13 @@ export async function setupAction(
         sshUser:
           opts.sshUser ??
           (prompt
-            ? await prompt.input('SSH user on the server', os.userInfo().username)
-            : os.userInfo().username),
+            ? await prompt.input(
+                'SSH user on the server',
+                transport === 'tailscale-ssh' ? TALARIA_ACCOUNT : os.userInfo().username,
+              )
+            : transport === 'tailscale-ssh'
+              ? TALARIA_ACCOUNT
+              : os.userInfo().username),
       };
       const clientConfig =
         transport === 'tailscale-ssh'

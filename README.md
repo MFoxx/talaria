@@ -41,7 +41,8 @@ Choose **client** on the machine that initiates sessions and **server** on the m
 that runs the coding CLIs. The wizard explains the transport tradeoff, generates an
 OpenSSH client key, configures and optionally tests the connection, and can enable the
 SSH service and install the restricted public key on the server. In Tailscale SSH mode it
-checks `tailscale` (and `tailscaled` on the server) and offers to enable Tailscale SSH.
+checks `tailscale` (and `tailscaled` on the server), offers to enable Tailscale SSH, and
+on macOS can provision a dedicated service account and project ACLs.
 The flags below remain available for non-interactive or repeatable setup.
 
 ### Option A: OpenSSH over Tailscale
@@ -64,6 +65,12 @@ prompt; Talaria creates `~/.ssh/authorized_keys` with safe permissions and adds 
 restricted entry. With non-interactive setup, add the printed line manually. The
 dedicated key is restricted to `talaria serve`—no shell, port/agent/X11 forwarding, or
 PTY:
+
+If Tailscale SSH is already enabled on the server, it intercepts tailnet port 22 and
+bypasses OpenSSH `authorized_keys`, including Talaria's forced command. The interactive
+wizard detects this conflict and recommends switching the setup to `tailscale-ssh`; it
+does not disable an intentionally enabled Tailscale SSH service. To deliberately use
+OpenSSH instead, disable Tailscale SSH first with `tailscale set --ssh=false`.
 
 ```
 command="PATH='/Users/me/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/absolute/node/bin:/absolute/talaria/dist' '/absolute/node/bin/node' '/absolute/talaria/dist/cli.js' serve",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... talaria-agent
@@ -103,25 +110,48 @@ On the controller:
 
 ```sh
 talaria setup --role client --transport tailscale-ssh \
-  --host my-workstation --ssh-user user
+  --host my-workstation --ssh-user talaria
 talaria ping --host desktop
 ```
 
 This mode generates no SSH key and does not use `authorized_keys`. The client runs
 `tailscale ssh user@host "talaria serve"`; Tailscale supplies authentication and host-key
 verification. Configure the tailnet policy to permit both network access and Tailscale
-SSH only from the controller identity/tag to the workstation identity/tag and intended
-OS user. An `accept` SSH rule is suitable for unattended Talaria calls; a `check` rule can
+SSH only from the controller identity/tag to the workstation identity/tag and the exact
+`talaria` OS user. Do not use `autogroup:nonroot` for this rule. An `accept` SSH rule is
+suitable for unattended Talaria calls; a `check` rule can
 require interactive reauthentication and is therefore unsuitable when Talaria must run
 fully unattended.
 
 Security tradeoff: built-in Tailscale SSH policy restricts who may connect, to which
 machine, and as which OS user, but it does **not** enforce an `authorized_keys`-style
-forced command. A controller allowed by that policy can request commands other than
-`talaria serve`. Use OpenSSH mode when the controller must not have shell access. To
-isolate Tailscale SSH further, use a dedicated OS account with tightly scoped filesystem
-permissions or a restricted login shell; Talaria does not configure that privileged OS
-policy automatically. See the [Tailscale SSH security model and policy setup](https://tailscale.com/docs/features/tailscale-ssh).
+forced command. This is important when Tailscale SSH was already enabled intentionally:
+do not assume an OpenSSH `authorized_keys` restriction still applies to tailnet
+connections.
+
+On an interactive macOS server setup, Talaria therefore recommends and can provision a
+hidden, password-disabled, non-admin `talaria` account. Before asking for administrator
+access, it displays the complete change plan. The provisioner then:
+
+- installs a root-owned login shell that accepts only the exact `talaria serve` command;
+- creates `talaria-projects`, adds the current user and service account, and applies
+  recursive group access plus inherited ACLs only to the selected project directories;
+- writes `/Users/talaria/.config/talaria/server.json` and private session state owned by
+  the service account; and
+- verifies Node, the Talaria CLI, `claude`, and `codex` as the service account.
+
+The wrapper has a self-contained `PATH` and absolute paths for Node and Talaria. If a tool
+is installed below a private directory that `talaria` cannot traverse, verification
+stops instead of weakening permissions on the main user's home; install that tool in a
+shared system prefix such as `/opt/homebrew` or `/usr/local` and rerun setup. Authenticate
+the tool CLIs explicitly as the service account when required (for example,
+`sudo -u talaria -H codex login`). Tailscale authentication remains policy-based, so no
+SSH key is created or copied for this account. The restricted shell is set directly in
+Directory Services and is intentionally not added to `/etc/shells`.
+
+On other operating systems, Tailscale server setup retains the selected/current account;
+use OpenSSH mode when command-level isolation is required. See the
+[Tailscale SSH security model and policy setup](https://tailscale.com/docs/features/tailscale-ssh).
 
 The Tailscale CLI's `ssh` wrapper is unavailable in the macOS App Store/TestFlight build;
 install Tailscale's standalone macOS variant on a controller that uses this transport.
@@ -134,7 +164,7 @@ to an exact command with `setup --server-command '…'`, or edit the host entry 
 {
   "transport": "tailscale-ssh",
   "tailscaleHost": "my-workstation",
-  "sshUser": "user",
+  "sshUser": "talaria",
   "serverCommand": "/absolute/path/to/node /absolute/path/to/talaria/dist/cli.js serve"
 }
 ```
