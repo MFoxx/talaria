@@ -101,7 +101,7 @@ describe('macOS Tailscale SSH isolation', () => {
     ).toBe(true);
     expect(commands).toContainEqual({
       bin: '/usr/bin/sudo',
-      args: ['-u', 'talaria', '/usr/bin/test', '-x', '/opt/homebrew/bin/node'],
+      args: ['-u', 'talaria', '/bin/test', '-x', '/opt/homebrew/bin/node'],
     });
     expect(
       commands.some(

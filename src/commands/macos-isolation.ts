@@ -377,7 +377,7 @@ async function verifyRuntimeAccess(
     await checked(
       deps.runInteractive,
       '/usr/bin/sudo',
-      ['-u', plan.account, '/usr/bin/test', ...testArgs],
+      ['-u', plan.account, '/bin/test', ...testArgs],
       `Verifying ${description} access`,
     );
   }
@@ -400,7 +400,7 @@ async function verifyProjectAccess(
       await checked(
         deps.runInteractive,
         '/usr/bin/sudo',
-        ['-u', plan.account, '/usr/bin/test', mode, directory],
+        ['-u', plan.account, '/bin/test', mode, directory],
         `Verifying project access to ${directory}`,
       );
     }
