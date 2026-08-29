@@ -45,6 +45,26 @@ checks `tailscale` (and `tailscaled` on the server), offers to enable Tailscale 
 on macOS can provision a dedicated service account and project ACLs.
 The flags below remain available for non-interactive or repeatable setup.
 
+### Allowed directories
+
+Server setup accepts more than one allowed directory. In the interactive wizard, enter one
+path per prompt and choose **Yes** when asked whether to add another. With flags, repeat
+`--allowed-dir`; values are not comma-separated:
+
+```sh
+talaria setup --role server --transport openssh --tool codex \
+  --allowed-dir /Users/me/projects \
+  --allowed-dir /Volumes/work/repos
+```
+
+Each entry allows that directory and all of its descendants, after symlinks are resolved.
+Use an absolute path when possible. A leading `~` or `~/` is supported and is expanded to
+the home directory of the account running the Talaria server. Talaria does not itself expand
+`$HOME`, other environment variables, or `~otheruser`; a shell may expand unquoted `$HOME` or
+`~/projects` before the CLI sees it, but the interactive wizard will not. The wizard's absolute
+default is the safest choice, particularly when macOS setup provisions a dedicated server
+account whose home differs from yours.
+
 ### Option A: OpenSSH over Tailscale
 
 On the workstation:

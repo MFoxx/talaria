@@ -8,6 +8,7 @@ import {
   buildServerConfig,
   buildTalariaForcedCommand,
   installAuthorizedKey,
+  promptAllowedDirs,
   setupAction,
 } from './setup.js';
 import { parseClientConfig } from '../config/client-config.js';
@@ -198,6 +199,32 @@ describe('config builders produce valid configs', () => {
         ? parsed.hosts.desktop.serverCommand
         : undefined,
     ).toBe('/opt/talaria/bin/talaria serve');
+  });
+});
+
+describe('promptAllowedDirs', () => {
+  it('collects one path per prompt and trims surrounding whitespace', async () => {
+    const prompt = new FakePrompter(
+      {},
+      {
+        'Allowed directory (this directory and its descendants; one path per prompt)':
+          '  ~/projects  ',
+        'Additional allowed directory': '/Volumes/work/repos',
+      },
+      [true, false],
+    );
+
+    await expect(promptAllowedDirs(prompt, '/unused')).resolves.toEqual([
+      '~/projects',
+      '/Volumes/work/repos',
+    ]);
+  });
+
+  it('rejects an empty allowed directory', async () => {
+    const prompt = new FakePrompter({}, { 'Additional allowed directory': ' ' }, [true]);
+    await expect(promptAllowedDirs(prompt, '/projects')).rejects.toThrow(
+      'Allowed directories cannot be empty',
+    );
   });
 });
 

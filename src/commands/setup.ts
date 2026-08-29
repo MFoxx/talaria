@@ -117,6 +117,30 @@ export function buildServerConfig(opts: {
   };
 }
 
+/** Prompt for one or more allowed roots. Each answer is one path, so paths may contain commas. */
+export async function promptAllowedDirs(
+  prompt: SetupPrompter,
+  defaultAllowedDir: string,
+): Promise<string[]> {
+  const allowedDirs: string[] = [];
+  let addAnother = true;
+  while (addAnother) {
+    const directory = await prompt.input(
+      allowedDirs.length === 0
+        ? 'Allowed directory (this directory and its descendants; one path per prompt)'
+        : 'Additional allowed directory',
+      allowedDirs.length === 0 ? defaultAllowedDir : undefined,
+    );
+    const trimmed = directory.trim();
+    if (trimmed.length === 0) {
+      throw new Error('Allowed directories cannot be empty');
+    }
+    allowedDirs.push(trimmed);
+    addAnother = await prompt.confirm('Allow another directory?', false);
+  }
+  return allowedDirs;
+}
+
 interface CommonClientConfigOptions {
   hostAlias: string;
   tailscaleHost: string;
@@ -590,13 +614,17 @@ async function configureServer(context: SetupWorkflowContext): Promise<string> {
   } = context;
   const currentUser = dependencies.username ?? os.userInfo().username;
   const defaultAllowedDir = path.join(home, 'projects');
+  if (prompt && !opts.allowedDir?.length) {
+    io.errLine('Allowed directories include all descendants. Enter one path at a time.');
+    io.errLine(
+      'Use an absolute path when possible; ~ means the home of the account running the server.',
+    );
+  }
   const allowedDirs = opts.allowedDir?.length
     ? opts.allowedDir
-    : [
-        prompt
-          ? await prompt.input('Directory Talaria may run tools in', defaultAllowedDir)
-          : defaultAllowedDir,
-      ];
+    : prompt
+      ? await promptAllowedDirs(prompt, defaultAllowedDir)
+      : [defaultAllowedDir];
   let tools: string[];
   if (opts.tool?.length) {
     tools = opts.tool;

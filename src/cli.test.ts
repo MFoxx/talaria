@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildProgram } from './cli.js';
+import { VERSION } from './index.js';
 
 describe('buildProgram', () => {
   it('registers all client and server commands', () => {
@@ -29,7 +30,7 @@ describe('buildProgram', () => {
   it('exposes a name and version', () => {
     const program = buildProgram();
     expect(program.name()).toBe('talaria');
-    expect(program.version()).toBe('0.1.1');
+    expect(program.version()).toBe(VERSION);
   });
 
   it('exposes both setup transports', () => {

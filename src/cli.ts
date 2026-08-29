@@ -118,7 +118,12 @@ export function buildProgram(): Command {
     .option('-H, --host <host>', 'server hostname or IP address')
     .option('--ssh-user <user>', 'SSH user on the server')
     .option('--host-alias <alias>', 'client config host alias')
-    .option('--allowed-dir <path>', 'allowed directory prefix (repeatable)', collect, [])
+    .option(
+      '--allowed-dir <path>',
+      'allowed directory and descendants (repeat for multiple; leading ~ is expanded)',
+      collect,
+      [],
+    )
     .option(
       '--tool <name>',
       'built-in server tool (repeatable: claude-code | codex | cursor)',
