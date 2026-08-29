@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { claudeCodeAdapter } from './claude-code.js';
 import { codexAdapter } from './codex.js';
 import { cursorAdapter } from './cursor.js';
+import { grokAdapter } from './grok.js';
 import { createGenericAdapter } from './generic.js';
 import { validateToolArgs } from './args.js';
 import { isTalariaError } from '../protocol/errors.js';
@@ -233,6 +234,115 @@ describe('cursor adapter', () => {
     expect(() =>
       cursorAdapter.buildSpawn({ ...base, prompt: 'p', toolArgs: { sandbox: 'read-only' } }),
     ).toThrow(/Unknown toolArg "sandbox"/);
+  });
+});
+
+describe('grok adapter', () => {
+  it('uses headless mode with structured output and the requested cwd by default', () => {
+    const spawn = grokAdapter.buildSpawn({ ...base, prompt: 'go', toolArgs: {} });
+    expect(spawn.bin).toBe('grok');
+    expect(spawn.args).toEqual([
+      '--no-auto-update',
+      '--no-alt-screen',
+      '--cwd',
+      '/proj',
+      '--output-format',
+      'streaming-json',
+      '-p',
+      'go',
+    ]);
+  });
+
+  it('maps model, output format, and auto-approval arguments', () => {
+    const spawn = grokAdapter.buildSpawn({
+      ...base,
+      prompt: 'go',
+      toolArgs: { model: 'grok-build', outputFormat: 'json', alwaysApprove: true },
+    });
+    expect(spawn.args).toEqual([
+      '--no-auto-update',
+      '--no-alt-screen',
+      '--cwd',
+      '/proj',
+      '--output-format',
+      'json',
+      '--model',
+      'grok-build',
+      '--always-approve',
+      '-p',
+      'go',
+    ]);
+  });
+
+  it('accepts plain output and rejects unsupported output formats', () => {
+    const plain = grokAdapter.buildSpawn({
+      ...base,
+      prompt: 'go',
+      toolArgs: { outputFormat: 'plain' },
+    });
+    expect(plain.args).toContain('plain');
+    expect(() =>
+      grokAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { outputFormat: 'xml' },
+      }),
+    ).toThrow(/must be one of: plain, json, streaming-json/);
+  });
+
+  it('resumes an explicit session and extracts its ID from fragmented JSONL', () => {
+    const continuation = grokAdapter.continuation!;
+    expect(continuation.verifyResumedSessionId).toBe(true);
+    const spawn = continuation.buildSpawn({
+      ...base,
+      prompt: 'next',
+      toolArgs: {},
+      nativeSessionId: 'grok-session',
+    });
+    expect(spawn.args).toEqual([
+      '--no-auto-update',
+      '--no-alt-screen',
+      '--cwd',
+      '/proj',
+      '--output-format',
+      'streaming-json',
+      '--resume',
+      'grok-session',
+      '-p',
+      'next',
+    ]);
+
+    const extractor = continuation.createSessionIdExtractor();
+    expect(extractor.push('{"type":"end","session')).toBeUndefined();
+    expect(extractor.push('Id":"grok-session"}\n')).toBe('grok-session');
+  });
+
+  it('extracts a session ID from json output without requiring a trailing newline', () => {
+    const extractor = grokAdapter.continuation!.createSessionIdExtractor();
+    expect(extractor.push('{"text":"done","session')).toBeUndefined();
+    expect(extractor.push('Id":"json-session"}')).toBe('json-session');
+  });
+
+  it('keeps prompt and cwd values as individual argv elements', () => {
+    const nasty = '"; rm -rf / #';
+    const spawn = grokAdapter.buildSpawn({
+      ...base,
+      dir: '/proj with spaces',
+      prompt: nasty,
+      toolArgs: {},
+    });
+    expect(spawn.args[spawn.args.indexOf('--cwd') + 1]).toBe('/proj with spaces');
+    expect(spawn.args.at(-1)).toBe(nasty);
+    expect(spawn.args.filter((arg) => arg === nasty)).toHaveLength(1);
+  });
+
+  it('rejects unknown and mistyped arguments', () => {
+    expect(() =>
+      grokAdapter.buildSpawn({ ...base, prompt: 'p', toolArgs: { sessionId: 'external' } }),
+    ).toThrow(/Unknown toolArg "sessionId"/);
+    expect(() =>
+      grokAdapter.buildSpawn({ ...base, prompt: 'p', toolArgs: { alwaysApprove: 'yes' } }),
+    ).toThrow(/must be of type boolean/);
   });
 });
 

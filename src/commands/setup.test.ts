@@ -352,7 +352,7 @@ describe('setupAction', () => {
         // Pin claude-code so resolveToolBin skips realpath on a nonexistent path.
         builtinToolBins: { 'claude-code': '/usr/local/bin/claude' },
         run: (bin, args) => {
-          // Only `claude` resolves on PATH; `codex` and `agent` are missing.
+          // Only `claude` resolves on PATH; `codex`, `agent`, and `grok` are missing.
           if (bin === '/usr/bin/which') {
             return Promise.resolve(
               args[0] === 'claude'
@@ -366,7 +366,7 @@ describe('setupAction', () => {
     );
 
     const offered = prompt.checkboxCalls[0]?.choices ?? [];
-    expect(offered.map((c) => c.value)).toEqual(['claude-code', 'codex', 'cursor']);
+    expect(offered.map((c) => c.value)).toEqual(['claude-code', 'codex', 'cursor', 'grok']);
     expect(offered.find((c) => c.value === 'claude-code')?.checked).toBe(true);
     expect(offered.find((c) => c.value === 'codex')?.checked).toBe(false);
     const config = JSON.parse(

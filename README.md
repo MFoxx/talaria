@@ -2,7 +2,8 @@
 
 Structured remote tool execution over SSH carried by Tailscale.
 
-An agent server delegates coding-tool sessions (Claude Code, Codex, ...) to a workstation
+An agent server delegates coding-tool sessions (Claude Code, Codex, Cursor, Grok Build, ...)
+to a workstation
 reachable over Tailscale. The default OpenSSH transport denies raw shell access; an
 optional Tailscale SSH transport trades that forced-command boundary for keyless tailnet
 authentication. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the core design.
@@ -29,7 +30,7 @@ Install on **both** machines: the agent server (VPS) and the workstation (target
 Talaria supports two SSH transports. `openssh` is the default and preserves the
 strongest command-level isolation. `tailscale-ssh` removes key distribution and host-key
 management, with the security tradeoff described below. Install Talaria, tmux, and the
-enabled tools (`claude`, `codex`, `agent`, and so on) on the workstation in both modes.
+enabled tools (`claude`, `codex`, `agent`, `grok`, and so on) on the workstation in both modes.
 
 Run the guided setup on each machine:
 
@@ -118,8 +119,9 @@ talaria setup
 
 Running server setup directly through `tsx src/cli.ts` is rejected because plain Node
 cannot execute that TypeScript source when sshd later invokes the forced command.
-Use `--tool codex`, `--tool claude-code`, or `--tool cursor` to enable only that built-in;
-repeat the flag to enable several. When omitted, setup enables and pins claude-code and codex.
+Use `--tool codex`, `--tool claude-code`, `--tool cursor`, or `--tool grok` to enable only
+that built-in; repeat the flag to enable several. When omitted, setup enables and pins
+claude-code and codex.
 Server configs created before executable pinning must be regenerated with
 `talaria setup --role server --force`.
 
@@ -209,6 +211,8 @@ Config lives at `~/.config/talaria/{server,client}.json`; session state and logs
 ```sh
 talaria run -H desktop -t claude-code -d ~/projects/app -p "Fix the auth middleware" \
   --arg model=claude-sonnet-4-6 --arg allowedTools=read,write,bash
+talaria run -H desktop -t grok -d ~/projects/app -p "Fix the failing tests" \
+  --arg model=grok-build --arg outputFormat=streaming-json --arg alwaysApprove=true
 talaria sessions -H desktop            # list sessions
 talaria attach -H desktop -s a1b2c3    # reconnect and resume output
 talaria continue -H desktop -c a1b2c3 -p "Now add regression tests"
@@ -217,6 +221,13 @@ talaria tools -H desktop               # available tools + versions
 ```
 
 Output format is selectable with `-o pretty|json|raw`.
+
+Built-in Grok Build runs use headless `grok -p` mode with background updates and the
+alternate screen disabled. Its supported tool arguments are `model`, `outputFormat`
+(`plain`, `json`, or the default `streaming-json`), and `alwaysApprove`. Talaria captures
+the `sessionId` from structured output and passes it to `grok --resume` for `talaria continue`.
+Choose structured output for the first turn when continuation is needed; plain output does
+not include a session ID.
 
 ### Programmatic API
 

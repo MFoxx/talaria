@@ -224,6 +224,64 @@ describe('serveConnection (end to end)', () => {
     expect(followUp.at(-1)).toMatchObject({ type: 'done', status: 'failed' });
   });
 
+  it('captures and resumes a Grok session from non-newline json output', async () => {
+    const harness = path.join(workDir, 'fake-grok');
+    writeFileSync(
+      harness,
+      [
+        '#!/usr/bin/env node',
+        'const args = process.argv.slice(2);',
+        'const cwd = args.indexOf("--cwd");',
+        'if (cwd < 0 || args[cwd + 1] !== process.cwd()) process.exit(7);',
+        'const resume = args.indexOf("--resume");',
+        'const id = resume >= 0 ? args[resume + 1] : "native-grok-session";',
+        'const prompt = args[args.indexOf("-p") + 1];',
+        'process.stdout.write(JSON.stringify({text:prompt,sessionId:id}));',
+      ].join('\n'),
+    );
+    chmodSync(harness, 0o755);
+    const grokConfig = parseServerConfig({
+      tools: ['grok'],
+      builtinToolBins: { grok: harness },
+      allowedDirs: [workDir],
+      sessionDir,
+    });
+    const grokCtx = buildContext(grokConfig, { tailPollMs: 10 });
+
+    const initial = await send(grokCtx, {
+      type: 'run',
+      tool: 'grok',
+      dir: workDir,
+      prompt: 'first',
+      toolArgs: { model: 'grok-build', outputFormat: 'json' },
+    });
+    const firstStarted = initial.find((message) => message.type === 'started');
+    if (firstStarted?.type !== 'started') throw new Error('missing Grok started event');
+    expect(initial.at(-1)).toMatchObject({ type: 'done', status: 'completed', exitCode: 0 });
+
+    const followUp = await send(grokCtx, {
+      type: 'continue',
+      conversationId: firstStarted.conversationId,
+      prompt: 'second',
+    });
+    const secondStarted = followUp.find((message) => message.type === 'started');
+    if (secondStarted?.type !== 'started') throw new Error('missing Grok continuation event');
+    expect(new SessionStore(sessionDir).readMeta(secondStarted.sessionId)).toMatchObject({
+      conversationId: firstStarted.conversationId,
+      parentSessionId: firstStarted.sessionId,
+      nativeSessionId: 'native-grok-session',
+      prompt: 'second',
+      toolArgs: { model: 'grok-build', outputFormat: 'json' },
+    });
+    expect(
+      followUp
+        .filter((message) => message.type === 'output')
+        .map((message) => message.data)
+        .join(''),
+    ).toContain('second');
+    expect(followUp.at(-1)).toMatchObject({ type: 'done', status: 'completed', exitCode: 0 });
+  });
+
   it('attach with offset 0 replays a finished session then sends done', async () => {
     const runMsgs = await send(ctx, { type: 'run', tool: 'echo-tool', dir: workDir, prompt: 'X' });
     const started = runMsgs.find((m) => m.type === 'started');

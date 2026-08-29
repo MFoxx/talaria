@@ -108,4 +108,13 @@ describe('parseServerConfig', () => {
       /requires an absolute builtinToolBins\.codex/,
     );
   });
+
+  it('accepts grok as a pinned built-in tool', () => {
+    const cfg = parseServerConfig({
+      tools: ['grok'],
+      builtinToolBins: { grok: '/usr/local/bin/grok' },
+    });
+    expect(cfg.tools).toEqual(['grok']);
+    expect(cfg.builtinToolBins).toEqual({ grok: '/usr/local/bin/grok' });
+  });
 });

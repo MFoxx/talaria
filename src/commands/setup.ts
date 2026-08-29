@@ -259,6 +259,7 @@ const TOOL_LABELS: Record<BuiltinToolName, { label: string; description: string 
   'claude-code': { label: 'Claude Code', description: "Anthropic's Claude Code CLI (`claude`)." },
   codex: { label: 'Codex', description: "OpenAI's Codex CLI (`codex`)." },
   cursor: { label: 'Cursor', description: "Cursor's agent CLI (`agent`)." },
+  grok: { label: 'Grok Build', description: "xAI's Grok coding CLI (`grok`)." },
 };
 
 /**
@@ -287,7 +288,7 @@ async function selectServerTools(
   const selected = await prompt.checkbox('Which CLI tools should this server run?', choices);
   if (selected.length === 0) {
     throw new Error(
-      'No tools selected. Install at least one supported CLI (claude, codex, or agent) and rerun setup.',
+      'No tools selected. Install at least one supported CLI (claude, codex, agent, or grok) and rerun setup.',
     );
   }
   const missing = selected.filter(
@@ -632,12 +633,14 @@ async function configureServer(context: SetupWorkflowContext): Promise<string> {
     tools = await selectServerTools(prompt, run, io);
   } else {
     throw new Error(
-      'Specify which tools to configure with --tool (claude-code, codex, and/or cursor) for non-interactive server setup.',
+      'Specify which tools to configure with --tool (claude-code, codex, cursor, and/or grok) for non-interactive server setup.',
     );
   }
   for (const tool of tools) {
-    if (tool !== 'claude-code' && tool !== 'codex' && tool !== 'cursor') {
-      throw new Error(`Unsupported setup tool ${tool}; expected claude-code, codex, or cursor`);
+    if (tool !== 'claude-code' && tool !== 'codex' && tool !== 'cursor' && tool !== 'grok') {
+      throw new Error(
+        `Unsupported setup tool ${tool}; expected claude-code, codex, cursor, or grok`,
+      );
     }
   }
   const runtime: SetupRuntime = await resolveSetupRuntime({
