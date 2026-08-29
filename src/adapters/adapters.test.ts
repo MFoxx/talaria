@@ -51,6 +51,29 @@ describe('claude-code adapter', () => {
     expect(spawn.args.filter((a) => a === nasty)).toHaveLength(1);
   });
 
+  it('resumes an explicit session and extracts its ID from fragmented JSONL', () => {
+    const continuation = claudeCodeAdapter.continuation!;
+    const spawn = continuation.buildSpawn({
+      ...base,
+      prompt: 'next',
+      toolArgs: {},
+      nativeSessionId: 'claude-session',
+    });
+    expect(spawn.args).toEqual([
+      '--output-format',
+      'stream-json',
+      '--verbose',
+      '--resume',
+      'claude-session',
+      '-p',
+      'next',
+    ]);
+
+    const extractor = continuation.createSessionIdExtractor();
+    expect(extractor.push('{"type":"system","session_')).toBeUndefined();
+    expect(extractor.push('id":"claude-session"}\n')).toBe('claude-session');
+  });
+
   it('rejects an unknown toolArg', () => {
     try {
       claudeCodeAdapter.buildSpawn({ ...base, prompt: 'p', toolArgs: { bogus: 1 } });
@@ -74,6 +97,7 @@ describe('codex adapter', () => {
     expect(spawn.args).toEqual([
       'exec',
       '--skip-git-repo-check',
+      '--json',
       '--sandbox',
       'workspace-write',
       'go',
@@ -89,6 +113,7 @@ describe('codex adapter', () => {
     expect(spawn.args).toEqual([
       'exec',
       '--skip-git-repo-check',
+      '--json',
       '--sandbox',
       'read-only',
       '--model',
@@ -116,6 +141,31 @@ describe('codex adapter', () => {
         toolArgs: { approvalMode: 'full-auto' },
       }),
     ).toThrow(/Unknown toolArg "approvalMode"/);
+  });
+
+  it('places explicit resume after exec flags and extracts thread.started', () => {
+    const continuation = codexAdapter.continuation!;
+    expect(continuation.verifyResumedSessionId).toBe(true);
+    const spawn = continuation.buildSpawn({
+      ...base,
+      prompt: 'next',
+      toolArgs: { sandbox: 'read-only' },
+      nativeSessionId: 'codex-thread',
+    });
+    expect(spawn.args).toEqual([
+      'exec',
+      '--skip-git-repo-check',
+      '--json',
+      '--sandbox',
+      'read-only',
+      'resume',
+      'codex-thread',
+      'next',
+    ]);
+    const extractor = continuation.createSessionIdExtractor();
+    expect(extractor.push('{"type":"thread.started","thread_id":"codex-thread"}\n')).toBe(
+      'codex-thread',
+    );
   });
 });
 
@@ -157,6 +207,26 @@ describe('cursor adapter', () => {
     const spawn = cursorAdapter.buildSpawn({ ...base, prompt: nasty, toolArgs: {} });
     expect(spawn.args[spawn.args.length - 1]).toBe(nasty);
     expect(spawn.args.filter((a) => a === nasty)).toHaveLength(1);
+  });
+
+  it('resumes an explicit chat and extracts its structured session ID', () => {
+    const continuation = cursorAdapter.continuation!;
+    const spawn = continuation.buildSpawn({
+      ...base,
+      prompt: 'next',
+      toolArgs: {},
+      nativeSessionId: 'cursor-chat',
+    });
+    expect(spawn.args).toEqual([
+      '-p',
+      '--output-format',
+      'stream-json',
+      '--resume',
+      'cursor-chat',
+      'next',
+    ]);
+    const extractor = continuation.createSessionIdExtractor();
+    expect(extractor.push('not json\n{"session_id":"cursor-chat"}\n')).toBe('cursor-chat');
   });
 
   it('rejects an unknown toolArg', () => {

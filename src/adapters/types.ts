@@ -23,6 +23,23 @@ export interface BuildSpawnRequest {
   toolArgs: ToolArgs;
 }
 
+export interface BuildContinuationRequest extends BuildSpawnRequest {
+  nativeSessionId: string;
+}
+
+/** Incrementally extracts a harness-native conversation ID from structured stdout. */
+export interface NativeSessionIdExtractor {
+  push(data: string): string | undefined;
+}
+
+/** Harness-specific continuation behavior kept behind the adapter seam. */
+export interface ContinuationAdapter {
+  createSessionIdExtractor(): NativeSessionIdExtractor;
+  buildSpawn(req: BuildContinuationRequest): SpawnConfig;
+  /** Fail continuation when structured output reports a different native ID. */
+  readonly verifyResumedSessionId?: boolean;
+}
+
 /** The spawn tuple an adapter produces. */
 export interface SpawnConfig {
   bin: string;
@@ -48,4 +65,6 @@ export interface ToolAdapter {
   check(): Promise<ToolAvailability>;
   /** Build the spawn tuple. Throws `INVALID_REQUEST` on bad `toolArgs`. */
   buildSpawn(req: BuildSpawnRequest): SpawnConfig;
+  /** Omitted when this harness cannot safely continue a previous conversation. */
+  readonly continuation?: ContinuationAdapter;
 }

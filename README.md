@@ -191,6 +191,7 @@ talaria run -H desktop -t claude-code -d ~/projects/app -p "Fix the auth middlew
   --arg model=claude-sonnet-4-6 --arg allowedTools=read,write,bash
 talaria sessions -H desktop            # list sessions
 talaria attach -H desktop -s a1b2c3    # reconnect and resume output
+talaria continue -H desktop -c a1b2c3 -p "Now add regression tests"
 talaria kill -H desktop -s a1b2c3      # stop a running session
 talaria tools -H desktop               # available tools + versions
 ```
@@ -212,6 +213,13 @@ for await (const event of client.run({
   tool: 'claude-code',
   dir: '/home/user/projects/app',
   prompt: 'Fix the auth middleware',
+})) {
+  if (event.type === 'output') process.stdout.write(event.data);
+}
+
+for await (const event of client.continue({
+  conversationId: '0123456789abcdef01234567',
+  prompt: 'Now add regression tests',
 })) {
   if (event.type === 'output') process.stdout.write(event.data);
 }

@@ -76,6 +76,9 @@ export async function dispatch(
     case 'run':
       await ctx.runner.run(req, emit);
       return;
+    case 'continue':
+      await ctx.runner.continue(req, emit);
+      return;
     case 'attach':
       await handleAttach(ctx, req, emit);
       return;

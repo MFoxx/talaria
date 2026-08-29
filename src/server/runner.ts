@@ -1,16 +1,20 @@
 /**
  * Session runner (ARCHITECTURE §4.3, §4.5).
  *
- * Orchestrates a `run`: validate → create session → spawn → stream framed output →
- * finalize. Validation (tool allowlist, directory whitelist, capacity) happens before
- * anything is spawned. Output is appended to the session log and emitted to the client
- * with the running byte offset so an `attach` can resume precisely.
+ * Every conversation turn is a fresh Talaria session with its own immutable log;
+ * harness-native conversation state stays behind the adapter seam.
  */
 
 import { TalariaError } from '../protocol/errors.js';
-import type { RunRequest, Response, StreamName } from '../protocol/messages.js';
-import type { SessionMeta } from './session-store.js';
-import type { SessionStore } from './session-store.js';
+import type {
+  ContinueRequest,
+  Response,
+  RunRequest,
+  StreamName,
+  ToolArgs,
+} from '../protocol/messages.js';
+import type { NativeSessionIdExtractor, SpawnConfig, ToolAdapter } from '../adapters/types.js';
+import type { SessionMeta, SessionStore } from './session-store.js';
 import type { ServerConfig } from '../config/server-config.js';
 import type { AdapterRegistry } from '../adapters/registry.js';
 import type { ExitResult, ProcessManager } from './process-manager.js';
@@ -20,7 +24,6 @@ import { newSessionId, tmuxSessionName } from '../util/ids.js';
 import { nullLogger, type Logger } from '../util/logger.js';
 import { deferred } from '../util/async.js';
 
-/** Grace period between SIGTERM and SIGKILL when a session is force-stopped. */
 export const KILL_GRACE_MS = 5000;
 
 export interface RunnerDeps {
@@ -32,8 +35,22 @@ export interface RunnerDeps {
   now?: () => number;
 }
 
-/** Emit a protocol message to the connected client. */
 export type Emit = (message: Response) => void;
+
+interface Execution {
+  sessionId: string;
+  conversationId: string;
+  parentSessionId: string | null;
+  nativeSessionId: string | null;
+  tool: string;
+  dir: string;
+  prompt: string;
+  toolArgs: ToolArgs;
+  timeout: number;
+  spawn: SpawnConfig;
+  extractor?: NativeSessionIdExtractor;
+  verifyResumedSessionId?: boolean;
+}
 
 export class Runner {
   private readonly store: SessionStore;
@@ -52,34 +69,134 @@ export class Runner {
     this.now = deps.now ?? Date.now;
   }
 
-  /**
-   * Validate and start a new session, streaming output via `emit`. Resolves when the
-   * tool exits (a `done` message has been emitted). Rejects with a {@link TalariaError}
-   * if validation fails before the session starts.
-   */
+  /** Validate and start a new conversation and its first execution. */
   async run(req: RunRequest, emit: Emit): Promise<void> {
-    const adapter = this.registry.get(req.tool); // UNKNOWN_TOOL
-    const resolvedDir = validateDir(req.dir, this.config.allowedDirs); // DIR_NOT_ALLOWED / DIR_NOT_FOUND
-    assertCapacity(this.store, this.config); // MAX_SESSIONS
+    const adapter = this.registry.get(req.tool);
+    const dir = validateDir(req.dir, this.config.allowedDirs);
+    assertCapacity(this.store, this.config);
 
     const timeout = resolveTimeout(req.timeout, this.config);
     const toolArgs = req.toolArgs ?? {};
-    const spawnConfig = adapter.buildSpawn({
-      dir: resolvedDir,
-      prompt: req.prompt,
-      timeout,
-      toolArgs,
-    });
-
     const sessionId = newSessionId();
+    await this.execute(
+      {
+        sessionId,
+        conversationId: sessionId,
+        parentSessionId: null,
+        nativeSessionId: null,
+        tool: req.tool,
+        dir,
+        prompt: req.prompt,
+        toolArgs,
+        timeout,
+        spawn: adapter.buildSpawn({ dir, prompt: req.prompt, timeout, toolArgs }),
+        ...(adapter.continuation
+          ? { extractor: adapter.continuation.createSessionIdExtractor() }
+          : {}),
+      },
+      emit,
+    );
+  }
+
+  /** Continue a server-owned conversation as a new execution. */
+  async continue(req: ContinueRequest, emit: Emit): Promise<void> {
+    const release = this.store.acquireConversationLock(req.conversationId);
+    try {
+      const executions = this.store.listConversation(req.conversationId);
+      if (executions.length === 0) {
+        throw new TalariaError(
+          'CONVERSATION_NOT_FOUND',
+          `No such conversation: ${req.conversationId}`,
+        );
+      }
+      if (executions.some((meta) => meta.status === 'running')) {
+        throw new TalariaError(
+          'CONVERSATION_BUSY',
+          `Conversation ${req.conversationId} already has a running execution`,
+        );
+      }
+
+      const previous = executions[0]!;
+      const adapter = this.registry.get(previous.tool);
+      const continuation = this.requireContinuation(adapter);
+      const nativeSessionId = previous.nativeSessionId;
+      if (!nativeSessionId) {
+        throw new TalariaError(
+          'CONTINUATION_UNAVAILABLE',
+          `Conversation ${req.conversationId} has no captured ${previous.tool} session ID`,
+        );
+      }
+
+      const dir = validateDir(previous.dir, this.config.allowedDirs);
+      assertCapacity(this.store, this.config);
+      const timeout = resolveTimeout(req.timeout, this.config);
+      const sessionId = newSessionId();
+      const spawn = continuation.buildSpawn({
+        dir,
+        prompt: req.prompt,
+        timeout,
+        toolArgs: previous.toolArgs,
+        nativeSessionId,
+      });
+
+      await this.execute(
+        {
+          sessionId,
+          conversationId: req.conversationId,
+          parentSessionId: previous.sessionId,
+          nativeSessionId,
+          tool: previous.tool,
+          dir,
+          prompt: req.prompt,
+          toolArgs: previous.toolArgs,
+          timeout,
+          spawn,
+          extractor: continuation.createSessionIdExtractor(),
+          ...(continuation.verifyResumedSessionId ? { verifyResumedSessionId: true } : {}),
+        },
+        emit,
+      );
+    } finally {
+      release();
+    }
+  }
+
+  private requireContinuation(adapter: ToolAdapter): NonNullable<ToolAdapter['continuation']> {
+    if (!adapter.continuation) {
+      throw new TalariaError(
+        'CONTINUATION_UNSUPPORTED',
+        `Tool "${adapter.name}" does not support continuation`,
+      );
+    }
+    return adapter.continuation;
+  }
+
+  private async execute(execution: Execution, emit: Emit): Promise<void> {
+    const {
+      sessionId,
+      conversationId,
+      parentSessionId,
+      tool,
+      dir,
+      prompt,
+      toolArgs,
+      timeout,
+      spawn,
+      extractor,
+      verifyResumedSessionId,
+    } = execution;
     const tmuxSession = tmuxSessionName(sessionId);
     const startedAt = new Date(this.now()).toISOString();
+    let nativeSessionId = execution.nativeSessionId;
 
     const meta: SessionMeta = {
       sessionId,
-      tool: req.tool,
-      dir: resolvedDir,
-      prompt: req.prompt,
+      conversationId,
+      parentSessionId,
+      nativeSessionId,
+      tool,
+      dir,
+      prompt,
       toolArgs,
       tmuxSession,
       pid: null,
@@ -97,16 +214,14 @@ export class Runner {
     const timers: { timeout?: NodeJS.Timeout; kill?: NodeJS.Timeout } = {};
     let finished = false;
     let terminationStatus: SessionMeta['status'] | null = null;
+    let resumeMismatchReported = false;
 
-    // Called once when the tool process exits (naturally or after a forced stop).
     const finalize = (exit: ExitResult): void => {
       if (finished) return;
       finished = true;
       if (timers.timeout) clearTimeout(timers.timeout);
       if (timers.kill) clearTimeout(timers.kill);
 
-      // A concurrent kill/timeout (possibly from another connection) may have already
-      // written a terminal status; don't clobber it with a natural-exit verdict.
       const current = this.store.readMeta(sessionId);
       const terminalFromElsewhere = current.status !== 'running' ? current.status : null;
       const status: SessionMeta['status'] =
@@ -120,10 +235,10 @@ export class Runner {
         signal: exit.signal,
         endedAt: new Date(this.now()).toISOString(),
       });
-
       emit({
         type: 'done',
         sessionId,
+        conversationId,
         exitCode: exit.code,
         signal: exit.signal,
         durationMs: this.now() - startMs,
@@ -140,6 +255,27 @@ export class Runner {
     };
 
     const onChunk = (stream: StreamName, data: string): void => {
+      if (extractor && stream === 'stdout') {
+        const captured = extractor.push(data);
+        if (nativeSessionId === null && captured !== undefined) {
+          nativeSessionId = captured;
+          this.store.updateMeta(sessionId, { nativeSessionId: captured });
+        } else if (
+          verifyResumedSessionId &&
+          captured !== undefined &&
+          captured !== nativeSessionId &&
+          !resumeMismatchReported
+        ) {
+          resumeMismatchReported = true;
+          emit({
+            type: 'error',
+            code: 'CONTINUATION_UNAVAILABLE',
+            message: `${tool} started native session ${captured} instead of resuming ${nativeSessionId}`,
+          });
+          forceStop('failed');
+        }
+      }
+
       const offset = this.store.appendOutput(sessionId, stream, data);
       emit({ type: 'output', stream, data, offset });
       if (offset > this.config.maxOutputSize) {
@@ -153,10 +289,10 @@ export class Runner {
       handle = await this.pm.start({
         sessionId,
         tmuxSession,
-        cwd: resolvedDir,
-        bin: spawnConfig.bin,
-        args: spawnConfig.args,
-        ...(spawnConfig.env ? { env: spawnConfig.env } : {}),
+        cwd: dir,
+        bin: spawn.bin,
+        args: spawn.args,
+        ...(spawn.env ? { env: spawn.env } : {}),
         onChunk,
         onExit: finalize,
       });
@@ -174,8 +310,9 @@ export class Runner {
     emit({
       type: 'started',
       sessionId,
-      tool: req.tool,
-      dir: resolvedDir,
+      conversationId,
+      tool,
+      dir,
       pid: handle.pid ?? 0,
       tmuxSession,
     });
@@ -184,7 +321,6 @@ export class Runner {
       forceStop('timeout');
     }, timeout * 1000);
 
-    // Resolve when the tool exits (finalize has emitted `done`).
     await exited.promise;
   }
 }

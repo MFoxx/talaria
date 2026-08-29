@@ -15,6 +15,7 @@
 
 import { validateToolArgs } from './args.js';
 import { checkBinaryVersion } from './check.js';
+import { createJsonlSessionIdExtractor } from './session-id.js';
 import type { AcceptedArgSpec, BuildSpawnRequest, SpawnConfig, ToolAdapter } from './types.js';
 
 const DEFAULT_BIN = 'agent';
@@ -27,26 +28,35 @@ const acceptedArgs: Record<string, AcceptedArgSpec> = {
   },
 };
 
+function buildArgs(req: BuildSpawnRequest, nativeSessionId?: string): string[] {
+  const args = validateToolArgs(acceptedArgs, req.toolArgs);
+  const flags: string[] = ['-p', '--output-format', 'stream-json'];
+
+  if (nativeSessionId !== undefined) flags.push('--resume', nativeSessionId);
+  if (args.force === true) flags.push('--force');
+  if (typeof args.model === 'string') flags.push('--model', args.model);
+  flags.push(req.prompt);
+  return flags;
+}
+
 export function createCursorAdapter(bin = DEFAULT_BIN): ToolAdapter {
   return {
     name: 'cursor',
     description: 'Cursor CLI (Cursor Agent)',
     acceptedArgs,
+    continuation: {
+      createSessionIdExtractor: () => createJsonlSessionIdExtractor((event) => event.session_id),
+      buildSpawn(req) {
+        return { bin, args: buildArgs(req, req.nativeSessionId) };
+      },
+    },
 
     check() {
       return checkBinaryVersion(bin);
     },
 
     buildSpawn(req: BuildSpawnRequest): SpawnConfig {
-      const args = validateToolArgs(acceptedArgs, req.toolArgs);
-      const flags: string[] = ['-p', '--output-format', 'stream-json'];
-
-      if (args.force === true) flags.push('--force');
-      if (typeof args.model === 'string') flags.push('--model', args.model);
-
-      // Prompt goes last as an explicit argv element — never interpolated into a string.
-      flags.push(req.prompt);
-      return { bin, args: flags };
+      return { bin, args: buildArgs(req) };
     },
   };
 }

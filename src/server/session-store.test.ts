@@ -88,4 +88,19 @@ describe('SessionStore', () => {
     store.delete('old');
     expect(store.list().map((m) => m.sessionId)).toEqual(['new']);
   });
+
+  it('groups executions by conversation and rejects a concurrent lock', () => {
+    const conversationId = '0123456789abcdef01234567';
+    store.create(meta('turn1', { conversationId }));
+    store.create(meta('turn2', { conversationId, parentSessionId: 'turn1' }));
+    expect(store.listConversation(conversationId).map((m) => m.sessionId)).toEqual([
+      'turn1',
+      'turn2',
+    ]);
+
+    const release = store.acquireConversationLock(conversationId);
+    expect(() => store.acquireConversationLock(conversationId)).toThrow(/busy/);
+    release();
+    expect(() => store.acquireConversationLock(conversationId)()).not.toThrow();
+  });
 });

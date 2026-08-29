@@ -46,7 +46,11 @@ export async function streamSession(
       case 'started':
         sessionId = ev.sessionId;
         if (format === 'json') io.write(JSON.stringify(ev) + '\n');
-        else if (format === 'pretty') io.errLine(`session ${ev.sessionId} started (pid ${ev.pid})`);
+        else if (format === 'pretty') {
+          io.errLine(
+            `session ${ev.sessionId} started in conversation ${ev.conversationId} (pid ${ev.pid})`,
+          );
+        }
         break;
       case 'attached':
         sessionId = ev.sessionId;
@@ -99,6 +103,24 @@ export async function runAction(opts: RunCliOptions, io: Io = defaultIo): Promis
     prompt: opts.prompt,
     ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
     ...(Object.keys(toolArgs).length > 0 ? { toolArgs } : {}),
+  });
+  process.exitCode = await streamSession(events, format, io, new OffsetStore());
+}
+
+export interface ContinueCliOptions {
+  host?: string;
+  conversation: string;
+  prompt: string;
+  timeout?: number;
+  output?: OutputFormat;
+}
+
+export async function continueAction(opts: ContinueCliOptions, io: Io = defaultIo): Promise<void> {
+  const { client, format } = makeClient(opts);
+  const events = client.continue({
+    conversationId: opts.conversation,
+    prompt: opts.prompt,
+    ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
   });
   process.exitCode = await streamSession(events, format, io, new OffsetStore());
 }

@@ -9,6 +9,7 @@
 
 import { validateToolArgs } from './args.js';
 import { checkBinaryVersion } from './check.js';
+import { createJsonlSessionIdExtractor } from './session-id.js';
 import type { AcceptedArgSpec, BuildSpawnRequest, SpawnConfig, ToolAdapter } from './types.js';
 
 const DEFAULT_BIN = 'claude';
@@ -23,30 +24,37 @@ const acceptedArgs: Record<string, AcceptedArgSpec> = {
   },
 };
 
+function buildArgs(req: BuildSpawnRequest, nativeSessionId?: string): string[] {
+  const args = validateToolArgs(acceptedArgs, req.toolArgs);
+  const flags: string[] = ['--output-format', 'stream-json', '--verbose'];
+
+  if (nativeSessionId !== undefined) flags.push('--resume', nativeSessionId);
+  if (typeof args.model === 'string') flags.push('--model', args.model);
+  if (Array.isArray(args.allowedTools)) flags.push('--allowedTools', args.allowedTools.join(','));
+  if (typeof args.maxTurns === 'number') flags.push('--max-turns', String(args.maxTurns));
+  if (args.dangerouslySkipPermissions === true) flags.push('--dangerously-skip-permissions');
+  flags.push('-p', req.prompt);
+  return flags;
+}
+
 export function createClaudeCodeAdapter(bin = DEFAULT_BIN): ToolAdapter {
   return {
     name: 'claude-code',
     description: 'Anthropic Claude Code CLI',
     acceptedArgs,
+    continuation: {
+      createSessionIdExtractor: () => createJsonlSessionIdExtractor((event) => event.session_id),
+      buildSpawn(req) {
+        return { bin, args: buildArgs(req, req.nativeSessionId) };
+      },
+    },
 
     check() {
       return checkBinaryVersion(bin);
     },
 
     buildSpawn(req: BuildSpawnRequest): SpawnConfig {
-      const args = validateToolArgs(acceptedArgs, req.toolArgs);
-      const flags: string[] = ['--output-format', 'stream-json', '--verbose'];
-
-      if (typeof args.model === 'string') flags.push('--model', args.model);
-      if (Array.isArray(args.allowedTools)) {
-        flags.push('--allowedTools', args.allowedTools.join(','));
-      }
-      if (typeof args.maxTurns === 'number') flags.push('--max-turns', String(args.maxTurns));
-      if (args.dangerouslySkipPermissions === true) flags.push('--dangerously-skip-permissions');
-
-      // Prompt goes last as an explicit argv element — never interpolated into a string.
-      flags.push('-p', req.prompt);
-      return { bin, args: flags };
+      return { bin, args: buildArgs(req) };
     },
   };
 }

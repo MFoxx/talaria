@@ -34,6 +34,9 @@ import type { StreamName } from '../protocol/messages.js';
 
 export const SessionMeta = z.strictObject({
   sessionId: z.string(),
+  conversationId: z.string().optional(),
+  parentSessionId: z.string().nullable().optional(),
+  nativeSessionId: z.string().nullable().optional(),
   tool: z.string(),
   dir: z.string(),
   prompt: z.string(),
@@ -48,6 +51,11 @@ export const SessionMeta = z.strictObject({
   timeout: z.number().int().positive(),
 });
 export type SessionMeta = z.infer<typeof SessionMeta>;
+
+/** Old 0.1 metadata predates conversations; its session is its conversation root. */
+export function conversationIdFor(meta: SessionMeta): string {
+  return meta.conversationId ?? meta.sessionId;
+}
 
 /** Bytes read back from the output log, plus the log's current total size. */
 export interface OutputSlice {
@@ -141,6 +149,34 @@ export class SessionStore {
       }
     }
     return metas.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  }
+
+  /** All retained executions in a conversation, newest first. */
+  listConversation(conversationId: string): SessionMeta[] {
+    return this.list().filter((meta) => conversationIdFor(meta) === conversationId);
+  }
+
+  /**
+   * Acquire an atomic, cross-process conversation lock. The caller must release it.
+   * Locks are held for the duration of a continuation turn, so concurrent follow-ups
+   * are rejected instead of racing two writers into one harness transcript.
+   */
+  acquireConversationLock(conversationId: string): () => void {
+    if (!/^[a-f0-9]{24}$/.test(conversationId)) {
+      throw new TalariaError('INVALID_REQUEST', 'Invalid conversation ID');
+    }
+    const lockRoot = path.join(this.root, '.conversation-locks');
+    const lockPath = path.join(lockRoot, conversationId);
+    mkdirSync(lockRoot, { recursive: true });
+    try {
+      mkdirSync(lockPath);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === 'EEXIST') {
+        throw new TalariaError('CONVERSATION_BUSY', `Conversation ${conversationId} is busy`);
+      }
+      throw cause;
+    }
+    return () => rmSync(lockPath, { recursive: true, force: true });
   }
 
   delete(id: string): void {

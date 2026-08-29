@@ -1,6 +1,6 @@
 {
   "name": "talaria",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Structured remote tool execution over SSH carried by Tailscale.",
   "private": true,
   "type": "module",
@@ -10,7 +10,10 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.js.map",
+    "!dist/**/*.test.d.ts"
   ],
   "engines": {
     "node": ">=20"

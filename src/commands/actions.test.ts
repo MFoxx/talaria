@@ -20,6 +20,7 @@ function collectIo(): Io & { out: string[]; err: string[] } {
 const started: Response = {
   type: 'started',
   sessionId: 'sid',
+  conversationId: 'conversation',
   tool: 't',
   dir: '/p',
   pid: 1,
@@ -29,6 +30,7 @@ const output: Response = { type: 'output', stream: 'stdout', data: 'hello', offs
 const doneOk: Response = {
   type: 'done',
   sessionId: 'sid',
+  conversationId: 'conversation',
   exitCode: 0,
   signal: null,
   durationMs: 1200,
@@ -37,6 +39,7 @@ const doneOk: Response = {
 const doneFail: Response = {
   type: 'done',
   sessionId: 'sid',
+  conversationId: 'conversation',
   exitCode: 1,
   signal: null,
   durationMs: 5,

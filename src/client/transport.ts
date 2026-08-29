@@ -67,6 +67,8 @@ export function buildSshArgs(target: OpenSshTarget, remoteCommand = REMOTE_COMMA
     '-i',
     target.sshKey,
     '-o',
+    'IdentitiesOnly=yes',
+    '-o',
     'BatchMode=yes',
     ...(target.sshOptions ?? []),
     `${target.sshUser}@${target.tailscaleHost}`,

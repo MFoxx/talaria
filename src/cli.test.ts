@@ -9,6 +9,7 @@ describe('buildProgram', () => {
     expect(names).toEqual([
       'attach',
       'config',
+      'continue',
       'kill',
       'ping',
       'run',
@@ -28,7 +29,7 @@ describe('buildProgram', () => {
   it('exposes a name and version', () => {
     const program = buildProgram();
     expect(program.name()).toBe('talaria');
-    expect(program.version()).toBe('0.1.0');
+    expect(program.version()).toBe('0.1.1');
   });
 
   it('exposes both setup transports', () => {

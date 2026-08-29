@@ -5,7 +5,7 @@
  * re-exports the stable protocol and config contracts that both halves build on.
  */
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 
 export * from './protocol/errors.js';
 export * from './protocol/messages.js';
@@ -15,7 +15,12 @@ export * from './config/paths.js';
 export * from './config/server-config.js';
 export * from './config/client-config.js';
 
-export { TalariaClient, type RunOptions, type AttachOptions } from './client/talaria-client.js';
+export {
+  TalariaClient,
+  type RunOptions,
+  type ContinueOptions,
+  type AttachOptions,
+} from './client/talaria-client.js';
 export {
   Transport,
   remoteConnector,

@@ -40,6 +40,12 @@ export interface AttachOptions {
   offset?: number;
 }
 
+export interface ContinueOptions {
+  conversationId: string;
+  prompt: string;
+  timeout?: number;
+}
+
 export class TalariaClient {
   private readonly transport: Transport;
 
@@ -71,6 +77,17 @@ export class TalariaClient {
       prompt: options.prompt,
       ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
       ...(options.toolArgs !== undefined ? { toolArgs: options.toolArgs } : {}),
+    };
+    return this.transport.send(request);
+  }
+
+  /** Continue a conversation in a fresh execution and stream its events. */
+  continue(options: ContinueOptions): AsyncGenerator<Response> {
+    const request: Request = {
+      type: 'continue',
+      conversationId: options.conversationId,
+      prompt: options.prompt,
+      ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
     };
     return this.transport.send(request);
   }

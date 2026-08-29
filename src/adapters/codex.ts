@@ -2,7 +2,7 @@
  * Codex adapter (ARCHITECTURE §7.3).
  *
  * Base invocation:
- *   codex exec --skip-git-repo-check --sandbox workspace-write <prompt>
+ *   codex exec --skip-git-repo-check --json --sandbox workspace-write <prompt>
  *
  * `exec` is Codex's supported non-interactive mode. Sandbox values are allowlisted
  * before they become argv elements; prompts are always passed as one final element.
@@ -12,6 +12,7 @@
 
 import { validateToolArgs } from './args.js';
 import { checkBinaryVersion } from './check.js';
+import { createJsonlSessionIdExtractor } from './session-id.js';
 import type { AcceptedArgSpec, BuildSpawnRequest, SpawnConfig, ToolAdapter } from './types.js';
 import { runCommand } from '../util/exec.js';
 
@@ -28,11 +29,32 @@ const acceptedArgs: Record<string, AcceptedArgSpec> = {
   },
 };
 
+function buildArgs(req: BuildSpawnRequest, nativeSessionId?: string): string[] {
+  const args = validateToolArgs(acceptedArgs, req.toolArgs);
+  const flags: string[] = ['exec', '--skip-git-repo-check', '--json'];
+
+  if (typeof args.sandbox === 'string') flags.push('--sandbox', args.sandbox);
+  if (typeof args.model === 'string') flags.push('--model', args.model);
+  if (nativeSessionId !== undefined) flags.push('resume', nativeSessionId);
+  flags.push(req.prompt);
+  return flags;
+}
+
 export function createCodexAdapter(bin = DEFAULT_BIN): ToolAdapter {
   return {
     name: 'codex',
     description: 'OpenAI Codex CLI',
     acceptedArgs,
+    continuation: {
+      verifyResumedSessionId: true,
+      createSessionIdExtractor: () =>
+        createJsonlSessionIdExtractor((event) =>
+          event.type === 'thread.started' ? event.thread_id : undefined,
+        ),
+      buildSpawn(req) {
+        return { bin, args: buildArgs(req, req.nativeSessionId) };
+      },
+    },
 
     async check() {
       const version = await checkBinaryVersion(bin);
@@ -49,17 +71,7 @@ export function createCodexAdapter(bin = DEFAULT_BIN): ToolAdapter {
     },
 
     buildSpawn(req: BuildSpawnRequest): SpawnConfig {
-      const args = validateToolArgs(acceptedArgs, req.toolArgs);
-      const flags: string[] = ['exec', '--skip-git-repo-check'];
-
-      // sandbox is defaulted, so this is always set exactly once.
-      if (typeof args.sandbox === 'string') {
-        flags.push('--sandbox', args.sandbox);
-      }
-      if (typeof args.model === 'string') flags.push('--model', args.model);
-
-      flags.push(req.prompt);
-      return { bin, args: flags };
+      return { bin, args: buildArgs(req) };
     },
   };
 }

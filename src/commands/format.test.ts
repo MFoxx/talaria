@@ -34,6 +34,7 @@ describe('renderSessions', () => {
   const sessions: SessionSummary[] = [
     {
       sessionId: 'a1',
+      conversationId: 'c1',
       tool: 'codex',
       dir: '/p',
       status: 'completed',

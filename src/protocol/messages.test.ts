@@ -13,6 +13,7 @@ describe('parseRequest', () => {
         timeout: 600,
         toolArgs: { model: 'claude-sonnet-4-6', allowedTools: ['read', 'write'] },
       },
+      { type: 'continue', conversationId: '0123456789abcdef01234567', prompt: 'Now test it' },
       { type: 'attach', sessionId: 'a1b2c3', offset: 48210 },
       { type: 'attach', sessionId: 'a1b2c3' },
       { type: 'list' },
@@ -50,16 +51,28 @@ describe('parseRequest', () => {
       parseRequest({ type: 'run', tool: 't', dir: '/d', prompt: 'p', timeout: 0 }),
     ).toThrow();
     expect(() => parseRequest({ type: 'attach', sessionId: 'a', offset: -1 })).toThrow();
+    expect(() =>
+      parseRequest({ type: 'continue', conversationId: '../../etc', prompt: 'p' }),
+    ).toThrow();
   });
 });
 
 describe('parseResponse', () => {
   it('accepts each spec response example', () => {
     const valid: unknown[] = [
-      { type: 'started', sessionId: 'a', tool: 't', dir: '/d', pid: 1, tmuxSession: 'talaria-a' },
+      {
+        type: 'started',
+        sessionId: 'a',
+        conversationId: 'c',
+        tool: 't',
+        dir: '/d',
+        pid: 1,
+        tmuxSession: 'talaria-a',
+      },
       {
         type: 'attached',
         sessionId: 'a',
+        conversationId: 'c',
         status: 'running',
         tool: 't',
         dir: '/d',
@@ -70,6 +83,7 @@ describe('parseResponse', () => {
       {
         type: 'done',
         sessionId: 'a',
+        conversationId: 'c',
         exitCode: 0,
         signal: null,
         durationMs: 5,
@@ -78,6 +92,7 @@ describe('parseResponse', () => {
       {
         type: 'done',
         sessionId: 'a',
+        conversationId: 'c',
         exitCode: null,
         signal: 'SIGTERM',
         durationMs: 5,
@@ -86,9 +101,17 @@ describe('parseResponse', () => {
       {
         type: 'session_list',
         sessions: [
-          { sessionId: 'a', tool: 't', dir: '/d', status: 'running', startedAt: 'now' },
+          {
+            sessionId: 'a',
+            conversationId: 'c',
+            tool: 't',
+            dir: '/d',
+            status: 'running',
+            startedAt: 'now',
+          },
           {
             sessionId: 'b',
+            conversationId: 'c',
             tool: 't',
             dir: '/d',
             status: 'completed',
@@ -101,6 +124,7 @@ describe('parseResponse', () => {
       {
         type: 'session_status',
         sessionId: 'a',
+        conversationId: 'c',
         tool: 't',
         dir: '/d',
         prompt: 'p',

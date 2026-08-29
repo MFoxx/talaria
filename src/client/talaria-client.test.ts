@@ -91,6 +91,19 @@ describe('TalariaClient over an in-process server', () => {
     }
   });
 
+  it('sends a structured continue request', async () => {
+    const events = [];
+    for await (const event of client.continue({
+      conversationId: '0123456789abcdef01234567',
+      prompt: 'next',
+    })) {
+      events.push(event);
+    }
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'error', code: 'CONVERSATION_NOT_FOUND' }),
+    ]);
+  });
+
   it('surfaces a connection failure with stderr', async () => {
     const failing: Connector = () => {
       const stdout = new PassThrough();
@@ -173,6 +186,8 @@ describe('buildSshArgs', () => {
     expect(args).toEqual([
       '-i',
       '/home/me/.ssh/talaria',
+      '-o',
+      'IdentitiesOnly=yes',
       '-o',
       'BatchMode=yes',
       '-o',

@@ -34,6 +34,13 @@ export const RunRequest = z.strictObject({
   toolArgs: ToolArgs.optional(),
 });
 
+export const ContinueRequest = z.strictObject({
+  type: z.literal('continue'),
+  conversationId: z.string().regex(/^[a-f0-9]{24}$/),
+  prompt: z.string(),
+  timeout: z.number().int().positive().optional(),
+});
+
 export const AttachRequest = z.strictObject({
   type: z.literal('attach'),
   sessionId: z.string().min(1),
@@ -64,6 +71,7 @@ export const ListToolsRequest = z.strictObject({
 
 export const Request = z.discriminatedUnion('type', [
   RunRequest,
+  ContinueRequest,
   AttachRequest,
   ListRequest,
   KillRequest,
@@ -73,6 +81,7 @@ export const Request = z.discriminatedUnion('type', [
 ]);
 
 export type RunRequest = z.infer<typeof RunRequest>;
+export type ContinueRequest = z.infer<typeof ContinueRequest>;
 export type AttachRequest = z.infer<typeof AttachRequest>;
 export type ListRequest = z.infer<typeof ListRequest>;
 export type KillRequest = z.infer<typeof KillRequest>;
@@ -88,6 +97,7 @@ export type Request = z.infer<typeof Request>;
 export const StartedMessage = z.strictObject({
   type: z.literal('started'),
   sessionId: z.string(),
+  conversationId: z.string(),
   tool: z.string(),
   dir: z.string(),
   pid: z.number().int(),
@@ -97,6 +107,7 @@ export const StartedMessage = z.strictObject({
 export const AttachedMessage = z.strictObject({
   type: z.literal('attached'),
   sessionId: z.string(),
+  conversationId: z.string(),
   status: SessionStatus,
   tool: z.string(),
   dir: z.string(),
@@ -114,6 +125,7 @@ export const OutputMessage = z.strictObject({
 export const DoneMessage = z.strictObject({
   type: z.literal('done'),
   sessionId: z.string(),
+  conversationId: z.string(),
   exitCode: z.number().int().nullable(),
   signal: z.string().nullable(),
   durationMs: z.number().int().nonnegative(),
@@ -122,6 +134,7 @@ export const DoneMessage = z.strictObject({
 
 export const SessionSummary = z.strictObject({
   sessionId: z.string(),
+  conversationId: z.string(),
   tool: z.string(),
   dir: z.string(),
   status: SessionStatus,
@@ -140,6 +153,7 @@ export const SessionListMessage = z.strictObject({
 export const SessionStatusMessage = z.strictObject({
   type: z.literal('session_status'),
   sessionId: z.string(),
+  conversationId: z.string(),
   tool: z.string(),
   dir: z.string(),
   prompt: z.string(),

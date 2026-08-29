@@ -18,7 +18,7 @@ import type {
   StatusRequest,
 } from '../protocol/messages.js';
 import { encodeFrame } from '../protocol/framing.js';
-import type { SessionStore, SessionMeta } from './session-store.js';
+import { conversationIdFor, type SessionStore, type SessionMeta } from './session-store.js';
 import type { AdapterRegistry } from '../adapters/registry.js';
 import type { ServerConfig } from '../config/server-config.js';
 import type { ProcessManager } from './process-manager.js';
@@ -56,6 +56,7 @@ export function handleList(ctx: HandlerContext, emit: Emit): void {
   const now = (ctx.now ?? Date.now)();
   const sessions: SessionSummary[] = ctx.store.list().map((meta) => ({
     sessionId: meta.sessionId,
+    conversationId: conversationIdFor(meta),
     tool: meta.tool,
     dir: meta.dir,
     status: meta.status,
@@ -73,6 +74,7 @@ export function handleStatus(ctx: HandlerContext, req: StatusRequest, emit: Emit
   emit({
     type: 'session_status',
     sessionId: meta.sessionId,
+    conversationId: conversationIdFor(meta),
     tool: meta.tool,
     dir: meta.dir,
     prompt: meta.prompt,
@@ -134,6 +136,7 @@ export async function handleAttach(
   emit({
     type: 'attached',
     sessionId: req.sessionId,
+    conversationId: conversationIdFor(meta),
     status: meta.status,
     tool: meta.tool,
     dir: meta.dir,
@@ -199,6 +202,7 @@ function emitDoneFromMeta(meta: SessionMeta, emit: Emit): void {
   emit({
     type: 'done',
     sessionId: meta.sessionId,
+    conversationId: conversationIdFor(meta),
     exitCode: meta.exitCode,
     signal: meta.signal,
     durationMs: durationFor(meta, Date.now()),

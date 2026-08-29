@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, realpathSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
@@ -69,7 +69,9 @@ describe('serveConnection (end to end)', () => {
 
     const started = msgs.find((m) => m.type === 'started');
     const done = msgs.find((m) => m.type === 'done');
-    expect(started).toBeDefined();
+    expect(started?.type).toBe('started');
+    if (started?.type !== 'started') throw new Error('missing started');
+    expect(started.conversationId).toMatch(/^[a-f0-9]{24}$/);
     expect(done).toMatchObject({ type: 'done', status: 'completed', exitCode: 0 });
 
     const outputs = msgs.filter((m) => m.type === 'output');
@@ -87,6 +89,139 @@ describe('serveConnection (end to end)', () => {
     // Offsets are monotonically increasing.
     const offsets = outputs.map((m) => m.offset);
     expect([...offsets].sort((a, b) => a - b)).toEqual(offsets);
+  });
+
+  it('continues a harness conversation in a new Talaria session', async () => {
+    const harness = path.join(workDir, 'fake-claude');
+    writeFileSync(
+      harness,
+      [
+        '#!/usr/bin/env node',
+        'const args = process.argv.slice(2);',
+        'const resume = args.indexOf("--resume");',
+        'const id = resume >= 0 ? args[resume + 1] : "native-claude-session";',
+        'const prompt = args.at(-1);',
+        'process.stdout.write(JSON.stringify({type:"system",session_id:id}) + "\\n");',
+        'process.stdout.write(JSON.stringify({type:"result",session_id:id,result:prompt}) + "\\n");',
+      ].join('\n'),
+    );
+    chmodSync(harness, 0o755);
+    const continuationConfig = parseServerConfig({
+      tools: ['claude-code'],
+      builtinToolBins: { 'claude-code': harness },
+      allowedDirs: [workDir],
+      sessionDir,
+    });
+    const continuationCtx = buildContext(continuationConfig, { tailPollMs: 10 });
+
+    const initial = await send(continuationCtx, {
+      type: 'run',
+      tool: 'claude-code',
+      dir: workDir,
+      prompt: 'first',
+      toolArgs: { model: 'test-model' },
+    });
+    const firstStarted = initial.find((message) => message.type === 'started');
+    expect(firstStarted?.type).toBe('started');
+    if (firstStarted?.type !== 'started') throw new Error('missing started');
+
+    const store = new SessionStore(sessionDir);
+    const release = store.acquireConversationLock(firstStarted.conversationId);
+    const busy = await send(continuationCtx, {
+      type: 'continue',
+      conversationId: firstStarted.conversationId,
+      prompt: 'racing follow-up',
+    });
+    release();
+    expect(busy).toEqual([expect.objectContaining({ type: 'error', code: 'CONVERSATION_BUSY' })]);
+
+    const followUp = await send(continuationCtx, {
+      type: 'continue',
+      conversationId: firstStarted.conversationId,
+      prompt: 'second',
+    });
+    const secondStarted = followUp.find((message) => message.type === 'started');
+    expect(secondStarted).toMatchObject({
+      type: 'started',
+      conversationId: firstStarted.conversationId,
+    });
+    if (secondStarted?.type !== 'started') throw new Error('missing continuation started');
+    expect(secondStarted.sessionId).not.toBe(firstStarted.sessionId);
+
+    const stored = store.readMeta(secondStarted.sessionId);
+    expect(stored).toMatchObject({
+      conversationId: firstStarted.conversationId,
+      parentSessionId: firstStarted.sessionId,
+      nativeSessionId: 'native-claude-session',
+      prompt: 'second',
+      toolArgs: { model: 'test-model' },
+    });
+    expect(
+      followUp
+        .filter((message) => message.type === 'output')
+        .map((message) => message.data)
+        .join(''),
+    ).toContain('second');
+  });
+
+  it('rejects continuation for a tool without continuation support', async () => {
+    const initial = await send(ctx, {
+      type: 'run',
+      tool: 'echo-tool',
+      dir: workDir,
+      prompt: 'first',
+    });
+    const started = initial.find((message) => message.type === 'started');
+    if (started?.type !== 'started') throw new Error('missing started');
+
+    const result = await send(ctx, {
+      type: 'continue',
+      conversationId: started.conversationId,
+      prompt: 'second',
+    });
+    expect(result).toEqual([
+      expect.objectContaining({ type: 'error', code: 'CONTINUATION_UNSUPPORTED' }),
+    ]);
+  });
+
+  it('fails a Codex continuation that reports a different native thread', async () => {
+    const harness = path.join(workDir, 'fake-codex');
+    writeFileSync(
+      harness,
+      [
+        '#!/usr/bin/env node',
+        'const resumed = process.argv.includes("resume");',
+        'const id = resumed ? "different-thread" : "original-thread";',
+        'process.stdout.write(JSON.stringify({type:"thread.started",thread_id:id}) + "\\n");',
+        'setTimeout(() => process.exit(0), 50);',
+      ].join('\n'),
+    );
+    chmodSync(harness, 0o755);
+    const codexConfig = parseServerConfig({
+      tools: ['codex'],
+      builtinToolBins: { codex: harness },
+      allowedDirs: [workDir],
+      sessionDir,
+    });
+    const codexCtx = buildContext(codexConfig, { tailPollMs: 10 });
+    const initial = await send(codexCtx, {
+      type: 'run',
+      tool: 'codex',
+      dir: workDir,
+      prompt: 'first',
+    });
+    const started = initial.find((message) => message.type === 'started');
+    if (started?.type !== 'started') throw new Error('missing started');
+
+    const followUp = await send(codexCtx, {
+      type: 'continue',
+      conversationId: started.conversationId,
+      prompt: 'second',
+    });
+    expect(followUp).toContainEqual(
+      expect.objectContaining({ type: 'error', code: 'CONTINUATION_UNAVAILABLE' }),
+    );
+    expect(followUp.at(-1)).toMatchObject({ type: 'done', status: 'failed' });
   });
 
   it('attach with offset 0 replays a finished session then sends done', async () => {

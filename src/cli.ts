@@ -7,12 +7,15 @@
  * thrown errors to a non-zero exit.
  */
 
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Command, Option } from 'commander';
 import { VERSION } from './index.js';
 import { isTalariaError } from './protocol/errors.js';
 import {
   attachAction,
   configAction,
+  continueAction,
   killAction,
   pingAction,
   runAction,
@@ -20,6 +23,7 @@ import {
   sessionsAction,
   toolsAction,
   type AttachCliOptions,
+  type ContinueCliOptions,
   type HostOutputOptions,
   type KillCliOptions,
   type RunCliOptions,
@@ -57,6 +61,16 @@ export function buildProgram(): Command {
     .option('--replay', 'replay all output from the beginning')
     .addOption(outputOption())
     .action((opts: AttachCliOptions) => attachAction(opts));
+
+  program
+    .command('continue')
+    .description('Continue a conversation in a new execution')
+    .option('-H, --host <alias>', 'host alias from client config')
+    .requiredOption('-c, --conversation <id>', 'conversation id')
+    .requiredOption('-p, --prompt <text>', 'follow-up prompt')
+    .option('--timeout <seconds>', 'timeout in seconds', (v) => Number.parseInt(v, 10))
+    .addOption(outputOption())
+    .action((opts: ContinueCliOptions) => continueAction(opts));
 
   program
     .command('sessions')
@@ -138,7 +152,21 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   }
 }
 
-// Run when invoked as a binary (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Detect direct invocation (not import by tests). Compares realpaths rather than raw
+ * paths/URLs: npm's global `bin` install runs this file through a symlink, and
+ * `import.meta.url` resolves through it to the real path while `process.argv[1]` stays
+ * the symlink, so a literal comparison always fails for a globally-installed CLI.
+ */
+function isMainModule(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   void main();
 }
