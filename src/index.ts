@@ -5,7 +5,9 @@
  * re-exports the stable protocol and config contracts that both halves build on.
  */
 
-export const VERSION = '0.1.1';
+import packageJson from '../package.json' with { type: 'json' };
+
+export const VERSION = packageJson.version;
 
 export * from './protocol/errors.js';
 export * from './protocol/messages.js';
