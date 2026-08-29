@@ -34,7 +34,7 @@ describe('buildProgram', () => {
   it('exposes both setup transports', () => {
     const setup = buildProgram().commands.find((command) => command.name() === 'setup');
     const transport = setup?.options.find((option) => option.long === '--transport');
-    expect(transport?.defaultValue).toBe('openssh');
+    expect(transport?.defaultValue).toBeUndefined();
     expect(transport?.description).toContain('tailscale-ssh');
   });
 });

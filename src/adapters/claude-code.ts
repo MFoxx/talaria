@@ -11,7 +11,7 @@ import { validateToolArgs } from './args.js';
 import { checkBinaryVersion } from './check.js';
 import type { AcceptedArgSpec, BuildSpawnRequest, SpawnConfig, ToolAdapter } from './types.js';
 
-const BIN = 'claude';
+const DEFAULT_BIN = 'claude';
 
 const acceptedArgs: Record<string, AcceptedArgSpec> = {
   model: { type: 'string', description: 'Model name → --model' },
@@ -23,28 +23,32 @@ const acceptedArgs: Record<string, AcceptedArgSpec> = {
   },
 };
 
-export const claudeCodeAdapter: ToolAdapter = {
-  name: 'claude-code',
-  description: 'Anthropic Claude Code CLI',
-  acceptedArgs,
+export function createClaudeCodeAdapter(bin = DEFAULT_BIN): ToolAdapter {
+  return {
+    name: 'claude-code',
+    description: 'Anthropic Claude Code CLI',
+    acceptedArgs,
 
-  check() {
-    return checkBinaryVersion(BIN);
-  },
+    check() {
+      return checkBinaryVersion(bin);
+    },
 
-  buildSpawn(req: BuildSpawnRequest): SpawnConfig {
-    const args = validateToolArgs(acceptedArgs, req.toolArgs);
-    const flags: string[] = ['--output-format', 'stream-json', '--verbose'];
+    buildSpawn(req: BuildSpawnRequest): SpawnConfig {
+      const args = validateToolArgs(acceptedArgs, req.toolArgs);
+      const flags: string[] = ['--output-format', 'stream-json', '--verbose'];
 
-    if (typeof args.model === 'string') flags.push('--model', args.model);
-    if (Array.isArray(args.allowedTools)) {
-      flags.push('--allowedTools', args.allowedTools.join(','));
-    }
-    if (typeof args.maxTurns === 'number') flags.push('--max-turns', String(args.maxTurns));
-    if (args.dangerouslySkipPermissions === true) flags.push('--dangerously-skip-permissions');
+      if (typeof args.model === 'string') flags.push('--model', args.model);
+      if (Array.isArray(args.allowedTools)) {
+        flags.push('--allowedTools', args.allowedTools.join(','));
+      }
+      if (typeof args.maxTurns === 'number') flags.push('--max-turns', String(args.maxTurns));
+      if (args.dangerouslySkipPermissions === true) flags.push('--dangerously-skip-permissions');
 
-    // Prompt goes last as an explicit argv element — never interpolated into a string.
-    flags.push('-p', req.prompt);
-    return { bin: BIN, args: flags };
-  },
-};
+      // Prompt goes last as an explicit argv element — never interpolated into a string.
+      flags.push('-p', req.prompt);
+      return { bin, args: flags };
+    },
+  };
+}
+
+export const claudeCodeAdapter = createClaudeCodeAdapter();

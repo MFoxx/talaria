@@ -139,6 +139,27 @@ describe('TalariaClient over an in-process server', () => {
       expect(err.message).toContain('zsh:1: command not found: talaria');
     }
   });
+
+  it('reports login text as a connection failure instead of malformed JSON', async () => {
+    const failing: Connector = () => {
+      const stdout = new PassThrough();
+      stdout.end('Login incorrect\n');
+      return {
+        stdin: new PassThrough(),
+        stdout,
+        exit: Promise.resolve({ code: 1, signal: null }),
+        label: 'tailscale',
+      };
+    };
+    const c = new TalariaClient(failing);
+    try {
+      await c.ping();
+      expect.unreachable();
+    } catch (error) {
+      expect(isTalariaError(error) && error.code).toBe('INTERNAL');
+      expect(error instanceof Error ? error.message : '').toContain('Login incorrect');
+    }
+  });
 });
 
 describe('buildSshArgs', () => {

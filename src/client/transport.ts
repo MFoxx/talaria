@@ -145,16 +145,35 @@ export class Transport {
     channel.stdin.end();
 
     let count = 0;
-    try {
-      for await (const line of readLines(channel.stdout)) {
-        count += 1;
-        yield parseResponse(decodeLine(line));
+    let protocolError: unknown;
+    let unexpectedStdout = '';
+    for await (const line of readLines(channel.stdout)) {
+      if (protocolError !== undefined) {
+        if (unexpectedStdout.length < 4096) unexpectedStdout += `${line}\n`;
+        continue;
       }
-    } catch (err) {
-      throw toTalariaError(err);
+      try {
+        const response = parseResponse(decodeLine(line));
+        count += 1;
+        yield response;
+      } catch (error) {
+        protocolError = error;
+        unexpectedStdout = `${line}\n`;
+      }
     }
 
     const { code } = await channel.exit;
+    if (protocolError !== undefined) {
+      if (code !== 0) {
+        const label = channel.label ?? 'ssh';
+        const detail = stderr.trim() || unexpectedStdout.trim();
+        throw new TalariaError(
+          'INTERNAL',
+          `Connection failed (${label} exit ${code})${detail ? `: ${detail}` : ''}`,
+        );
+      }
+      throw toTalariaError(protocolError);
+    }
     if (count === 0) {
       const label = channel.label ?? 'ssh';
       throw new TalariaError(

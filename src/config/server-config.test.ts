@@ -16,12 +16,17 @@ describe('parseServerConfig', () => {
     expect(cfg.sessionDir).toBe('/data/talaria/sessions');
     expect(cfg.logFile).toBe('/data/talaria/server.log');
     expect(cfg.tools).toEqual([]);
+    expect(cfg.builtinToolBins).toEqual({});
   });
 
   it('accepts the spec example config', () => {
     const cfg = parseServerConfig(
       {
         tools: ['claude-code', 'codex'],
+        builtinToolBins: {
+          'claude-code': '/usr/local/bin/claude',
+          codex: '/usr/local/bin/codex',
+        },
         allowedDirs: ['/home/user/projects', '/home/user/work'],
         maxConcurrentSessions: 3,
         defaultTimeout: 600,
@@ -90,5 +95,17 @@ describe('parseServerConfig', () => {
 
   it('rejects unknown top-level fields', () => {
     expect(() => parseServerConfig({ bogus: true })).toThrow();
+  });
+
+  it('requires pinned built-in tool binaries to be absolute', () => {
+    expect(() =>
+      parseServerConfig({ tools: ['codex'], builtinToolBins: { codex: './bin/codex' } }),
+    ).toThrow(/must be an absolute path/);
+  });
+
+  it('rejects an enabled built-in tool without a pinned binary', () => {
+    expect(() => parseServerConfig({ tools: ['codex'] })).toThrow(
+      /requires an absolute builtinToolBins\.codex/,
+    );
   });
 });
