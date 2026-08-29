@@ -17,7 +17,7 @@ import { validateToolArgs } from './args.js';
 import { checkBinaryVersion } from './check.js';
 import type { AcceptedArgSpec, BuildSpawnRequest, SpawnConfig, ToolAdapter } from './types.js';
 
-const BIN = 'agent';
+const DEFAULT_BIN = 'agent';
 
 const acceptedArgs: Record<string, AcceptedArgSpec> = {
   model: { type: 'string', description: 'Model name → --model' },
@@ -27,24 +27,28 @@ const acceptedArgs: Record<string, AcceptedArgSpec> = {
   },
 };
 
-export const cursorAdapter: ToolAdapter = {
-  name: 'cursor',
-  description: 'Cursor CLI (Cursor Agent)',
-  acceptedArgs,
+export function createCursorAdapter(bin = DEFAULT_BIN): ToolAdapter {
+  return {
+    name: 'cursor',
+    description: 'Cursor CLI (Cursor Agent)',
+    acceptedArgs,
 
-  check() {
-    return checkBinaryVersion(BIN);
-  },
+    check() {
+      return checkBinaryVersion(bin);
+    },
 
-  buildSpawn(req: BuildSpawnRequest): SpawnConfig {
-    const args = validateToolArgs(acceptedArgs, req.toolArgs);
-    const flags: string[] = ['-p', '--output-format', 'stream-json'];
+    buildSpawn(req: BuildSpawnRequest): SpawnConfig {
+      const args = validateToolArgs(acceptedArgs, req.toolArgs);
+      const flags: string[] = ['-p', '--output-format', 'stream-json'];
 
-    if (args.force === true) flags.push('--force');
-    if (typeof args.model === 'string') flags.push('--model', args.model);
+      if (args.force === true) flags.push('--force');
+      if (typeof args.model === 'string') flags.push('--model', args.model);
 
-    // Prompt goes last as an explicit argv element — never interpolated into a string.
-    flags.push(req.prompt);
-    return { bin: BIN, args: flags };
-  },
-};
+      // Prompt goes last as an explicit argv element — never interpolated into a string.
+      flags.push(req.prompt);
+      return { bin, args: flags };
+    },
+  };
+}
+
+export const cursorAdapter = createCursorAdapter();

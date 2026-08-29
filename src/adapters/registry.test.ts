@@ -4,7 +4,14 @@ import { parseServerConfig } from '../config/server-config.js';
 import { isTalariaError } from '../protocol/errors.js';
 
 function config(overrides: Record<string, unknown>) {
-  return parseServerConfig({ allowedDirs: ['/tmp'], ...overrides });
+  return parseServerConfig({
+    allowedDirs: ['/tmp'],
+    builtinToolBins: {
+      'claude-code': '/usr/local/bin/claude',
+      codex: '/usr/local/bin/codex',
+    },
+    ...overrides,
+  });
 }
 
 describe('AdapterRegistry', () => {
@@ -35,6 +42,21 @@ describe('AdapterRegistry', () => {
     } catch (err) {
       expect(isTalariaError(err) && err.code).toBe('UNKNOWN_TOOL');
     }
+  });
+
+  it('pins built-in adapters to configured absolute binaries', () => {
+    const registry = AdapterRegistry.fromConfig(
+      config({
+        tools: ['claude-code', 'codex'],
+        builtinToolBins: {
+          'claude-code': '/opt/tools/claude',
+          codex: '/opt/tools/codex',
+        },
+      }),
+    );
+    const request = { dir: '/tmp', prompt: 'p', timeout: 1, toolArgs: {} };
+    expect(registry.get('claude-code').buildSpawn(request).bin).toBe('/opt/tools/claude');
+    expect(registry.get('codex').buildSpawn(request).bin).toBe('/opt/tools/codex');
   });
 
   it('reports availability with the ToolInfo shape', async () => {

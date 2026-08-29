@@ -8,6 +8,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { z } from 'zod';
 import { defaultLogFile, defaultSessionDir, expandTilde, serverConfigPath } from './paths.js';
 
@@ -36,6 +37,13 @@ export type CustomTool = z.infer<typeof CustomTool>;
 /** Raw config as it appears on disk — every defaulted field is optional. */
 const ServerConfigInput = z.strictObject({
   tools: z.array(z.string()).default([]),
+  builtinToolBins: z
+    .strictObject({
+      'claude-code': z.string().min(1).optional(),
+      codex: z.string().min(1).optional(),
+      cursor: z.string().min(1).optional(),
+    })
+    .default({}),
   allowedDirs: z.array(z.string()).default([]),
   maxConcurrentSessions: z.number().int().positive().default(3),
   defaultTimeout: z.number().int().positive().default(600),
@@ -51,6 +59,7 @@ const ServerConfigInput = z.strictObject({
 /** Normalized server config: all fields present, paths expanded. */
 export interface ServerConfig {
   tools: string[];
+  builtinToolBins: Partial<Record<(typeof BUILTIN_TOOL_NAMES)[number], string>>;
   allowedDirs: string[];
   maxConcurrentSessions: number;
   defaultTimeout: number;
@@ -116,9 +125,27 @@ export function parseServerConfig(
   }
 
   const expand = (p: string): string => expandTilde(p, home);
+  const builtinToolBins = Object.fromEntries(
+    Object.entries(cfg.builtinToolBins)
+      .filter((entry): entry is [string, string] => entry[1] !== undefined)
+      .map(([name, bin]) => [name, expand(bin)]),
+  ) as ServerConfig['builtinToolBins'];
+  for (const [name, bin] of Object.entries(builtinToolBins)) {
+    if (!path.isAbsolute(bin)) {
+      throw new Error(`Invalid server config: builtinToolBins.${name} must be an absolute path`);
+    }
+  }
+  for (const name of BUILTIN_TOOL_NAMES) {
+    if (cfg.tools.includes(name) && builtinToolBins[name] === undefined) {
+      throw new Error(
+        `Invalid server config: enabled built-in tool "${name}" requires an absolute builtinToolBins.${name}`,
+      );
+    }
+  }
 
   return {
     tools: cfg.tools,
+    builtinToolBins,
     allowedDirs: cfg.allowedDirs.map(expand),
     maxConcurrentSessions: cfg.maxConcurrentSessions,
     defaultTimeout: cfg.defaultTimeout,

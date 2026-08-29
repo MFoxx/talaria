@@ -10,17 +10,11 @@
 import { TalariaError } from '../protocol/errors.js';
 import type { ToolInfo } from '../protocol/messages.js';
 import type { ServerConfig } from '../config/server-config.js';
-import { claudeCodeAdapter } from './claude-code.js';
-import { codexAdapter } from './codex.js';
-import { cursorAdapter } from './cursor.js';
+import { createClaudeCodeAdapter } from './claude-code.js';
+import { createCodexAdapter } from './codex.js';
+import { createCursorAdapter } from './cursor.js';
 import { createGenericAdapter } from './generic.js';
 import type { ToolAdapter } from './types.js';
-
-const BUILTINS: Record<string, ToolAdapter> = {
-  'claude-code': claudeCodeAdapter,
-  codex: codexAdapter,
-  cursor: cursorAdapter,
-};
 
 export class AdapterRegistry {
   private readonly adapters = new Map<string, ToolAdapter>();
@@ -34,11 +28,16 @@ export class AdapterRegistry {
    * every `tools` entry resolves to a built-in or a defined custom tool).
    */
   static fromConfig(config: ServerConfig): AdapterRegistry {
+    const builtins: Record<string, ToolAdapter> = {
+      'claude-code': createClaudeCodeAdapter(config.builtinToolBins['claude-code']),
+      codex: createCodexAdapter(config.builtinToolBins.codex),
+      cursor: createCursorAdapter(config.builtinToolBins.cursor),
+    };
     const customByName = new Map(config.customTools.map((t) => [t.name, t]));
     const adapters = new Map<string, ToolAdapter>();
 
     for (const name of config.tools) {
-      const builtin = BUILTINS[name];
+      const builtin = builtins[name];
       if (builtin) {
         adapters.set(name, builtin);
         continue;

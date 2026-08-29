@@ -15,7 +15,7 @@ import { checkBinaryVersion } from './check.js';
 import type { AcceptedArgSpec, BuildSpawnRequest, SpawnConfig, ToolAdapter } from './types.js';
 import { runCommand } from '../util/exec.js';
 
-const BIN = 'codex';
+const DEFAULT_BIN = 'codex';
 const SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-access'] as const;
 
 const acceptedArgs: Record<string, AcceptedArgSpec> = {
@@ -28,36 +28,40 @@ const acceptedArgs: Record<string, AcceptedArgSpec> = {
   },
 };
 
-export const codexAdapter: ToolAdapter = {
-  name: 'codex',
-  description: 'OpenAI Codex CLI',
-  acceptedArgs,
+export function createCodexAdapter(bin = DEFAULT_BIN): ToolAdapter {
+  return {
+    name: 'codex',
+    description: 'OpenAI Codex CLI',
+    acceptedArgs,
 
-  async check() {
-    const version = await checkBinaryVersion(BIN);
-    if (!version.available) return version;
+    async check() {
+      const version = await checkBinaryVersion(bin);
+      if (!version.available) return version;
 
-    const execHelp = await runCommand(BIN, ['exec', '--help']);
-    if (execHelp.code !== 0) {
-      return {
-        available: false,
-        error: 'installed Codex CLI does not support non-interactive `codex exec`',
-      };
-    }
-    return version;
-  },
+      const execHelp = await runCommand(bin, ['exec', '--help']);
+      if (execHelp.code !== 0) {
+        return {
+          available: false,
+          error: 'installed Codex CLI does not support non-interactive `codex exec`',
+        };
+      }
+      return version;
+    },
 
-  buildSpawn(req: BuildSpawnRequest): SpawnConfig {
-    const args = validateToolArgs(acceptedArgs, req.toolArgs);
-    const flags: string[] = ['exec', '--skip-git-repo-check'];
+    buildSpawn(req: BuildSpawnRequest): SpawnConfig {
+      const args = validateToolArgs(acceptedArgs, req.toolArgs);
+      const flags: string[] = ['exec', '--skip-git-repo-check'];
 
-    // sandbox is defaulted, so this is always set exactly once.
-    if (typeof args.sandbox === 'string') {
-      flags.push('--sandbox', args.sandbox);
-    }
-    if (typeof args.model === 'string') flags.push('--model', args.model);
+      // sandbox is defaulted, so this is always set exactly once.
+      if (typeof args.sandbox === 'string') {
+        flags.push('--sandbox', args.sandbox);
+      }
+      if (typeof args.model === 'string') flags.push('--model', args.model);
 
-    flags.push(req.prompt);
-    return { bin: BIN, args: flags };
-  },
-};
+      flags.push(req.prompt);
+      return { bin, args: flags };
+    },
+  };
+}
+
+export const codexAdapter = createCodexAdapter();
