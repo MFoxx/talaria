@@ -128,6 +128,11 @@ describe('macOS Tailscale SSH isolation', () => {
       bin: '/usr/bin/sudo',
       args: ['/usr/bin/dscl', '.', '-create', '/Users/talaria', 'UniqueID', '503'],
     });
+    expect(
+      commands.some(
+        ({ args }) => args.includes('AuthenticationAuthority') && args.includes(';DisabledUser;'),
+      ),
+    ).toBe(false);
     expect(commands).toContainEqual({
       bin: '/usr/bin/sudo',
       args: [
@@ -200,5 +205,37 @@ describe('macOS Tailscale SSH isolation', () => {
           ),
       }),
     ).rejects.toThrow(/is an administrator/);
+  });
+
+  it('repairs a service account that was disabled at the macOS login layer', async () => {
+    const commands: Array<{ bin: string; args: string[] }> = [];
+    await provisionMacOsIsolation(plan(), {
+      getuid: () => 501,
+      runInteractive: (bin, args) => {
+        commands.push({ bin, args });
+        return Promise.resolve(0);
+      },
+      run: (bin, args) => {
+        if (bin === '/usr/sbin/dseditgroup' && args.includes('checkmember')) {
+          return Promise.resolve(result(0, 'no talaria is NOT a member of admin\n'));
+        }
+        const attribute = args.at(-1);
+        if (attribute === 'NFSHomeDirectory') {
+          return Promise.resolve(result(0, 'NFSHomeDirectory: /Users/talaria\n'));
+        }
+        if (attribute === 'UserShell') {
+          return Promise.resolve(result(0, 'UserShell: /usr/local/libexec/talaria-shell\n'));
+        }
+        if (attribute === 'AuthenticationAuthority') {
+          return Promise.resolve(result(0, 'AuthenticationAuthority: ;DisabledUser;\n'));
+        }
+        return Promise.resolve(result());
+      },
+    });
+
+    expect(commands).toContainEqual({
+      bin: '/usr/bin/sudo',
+      args: ['/usr/bin/dscl', '.', '-delete', '/Users/talaria', 'AuthenticationAuthority'],
+    });
   });
 });

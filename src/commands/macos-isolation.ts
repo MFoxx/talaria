@@ -284,6 +284,26 @@ async function createAccountIfMissing(
         );
       }
     }
+    const authenticationAuthority = await run('/usr/bin/dscl', [
+      '.',
+      '-read',
+      `/Users/${plan.account}`,
+      'AuthenticationAuthority',
+    ]);
+    if (authenticationAuthority.code === 0) {
+      await checkedPrivileged(
+        deps,
+        '/usr/bin/dscl',
+        ['.', '-delete', `/Users/${plan.account}`, 'AuthenticationAuthority'],
+        `Removing login-disabled state from ${plan.account}`,
+      );
+    }
+    await checkedPrivileged(
+      deps,
+      '/usr/bin/dscl',
+      ['.', '-create', `/Users/${plan.account}`, 'Password', '*'],
+      `Disabling password authentication for ${plan.account}`,
+    );
     return;
   }
 
@@ -306,7 +326,6 @@ async function createAccountIfMissing(
     ['UserShell', plan.shellPath],
     ['IsHidden', '1'],
     ['Password', '*'],
-    ['AuthenticationAuthority', ';DisabledUser;'],
   ];
   await checkedPrivileged(
     deps,
