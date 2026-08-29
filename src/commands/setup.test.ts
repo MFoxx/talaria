@@ -1,16 +1,53 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
   buildAuthorizedKeysLine,
   buildClientConfig,
   buildServerConfig,
+  installAuthorizedKey,
   setupAction,
 } from './setup.js';
 import { parseClientConfig } from '../config/client-config.js';
 import { parseServerConfig } from '../config/server-config.js';
 import type { Io } from './actions.js';
+import type { SelectChoice, SetupPrompter } from './setup-prompts.js';
+import { BinaryNotFoundError, type RunResult } from '../util/exec.js';
+
+const okResult = (stdout = ''): RunResult => ({
+  code: 0,
+  signal: null,
+  stdout,
+  stderr: '',
+});
+
+class FakePrompter implements SetupPrompter {
+  readonly selections: Array<{ question: string; choices: readonly SelectChoice<string>[] }> = [];
+
+  constructor(
+    private readonly selected: Record<string, string> = {},
+    private readonly inputs: Record<string, string> = {},
+    private readonly confirmations: boolean[] = [],
+  ) {}
+
+  select<T extends string>(question: string, choices: readonly SelectChoice<T>[]): Promise<T> {
+    this.selections.push({ question, choices });
+    const value = this.selected[question];
+    if (!value) throw new Error(`No fake selection for ${question}`);
+    return Promise.resolve(value as T);
+  }
+
+  input(question: string, defaultValue?: string): Promise<string> {
+    return Promise.resolve(this.inputs[question] ?? defaultValue ?? '');
+  }
+
+  confirm(): Promise<boolean> {
+    return Promise.resolve(this.confirmations.shift() ?? false);
+  }
+
+  close(): void {}
+}
 
 describe('buildAuthorizedKeysLine', () => {
   it('locks the key to talaria serve with restrictions', () => {
@@ -18,6 +55,39 @@ describe('buildAuthorizedKeysLine', () => {
     expect(line).toBe(
       'command="talaria serve",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAAKEY talaria-agent',
     );
+  });
+});
+
+describe('installAuthorizedKey', () => {
+  it('creates a restricted, idempotent authorized_keys entry', () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'talaria-authorized-key-'));
+    try {
+      const key = 'ssh-ed25519 AAAAPUB talaria-agent';
+      expect(installAuthorizedKey(key, home)).toBe('installed');
+      expect(installAuthorizedKey(key, home)).toBe('present');
+      const file = path.join(home, '.ssh', 'authorized_keys');
+      expect(readFileSync(file, 'utf8')).toBe(buildAuthorizedKeysLine(key) + '\n');
+      expect(statSync(path.join(home, '.ssh')).mode & 0o777).toBe(0o700);
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to leave the same key authorized without Talaria restrictions', () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'talaria-authorized-key-'));
+    try {
+      const sshDir = path.join(home, '.ssh');
+      writeFileSync(path.join(home, 'placeholder'), '');
+      // mkdir is intentionally exercised by the production helper first.
+      installAuthorizedKey('ssh-ed25519 AAAAOTHER', home);
+      writeFileSync(path.join(sshDir, 'authorized_keys'), 'ssh-ed25519 AAAAPUB unrestricted\n');
+      expect(() => installAuthorizedKey('ssh-ed25519 AAAAPUB talaria-agent', home)).toThrow(
+        /already authorized without/,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
@@ -195,5 +265,119 @@ describe('setupAction', () => {
     await expect(
       setupAction({ transport: 'magic' as 'openssh', skipKeygen: true, env: {} }, io),
     ).rejects.toThrow(/Invalid --transport/);
+  });
+
+  it('guides an OpenSSH client through key generation, config, and a connection test', async () => {
+    const keyPath = path.join(root, '.ssh', 'talaria_agent_ed25519');
+    const prompt = new FakePrompter(
+      {
+        'What do you want to configure?': 'client',
+        'How should the client connect to this server?': 'openssh',
+      },
+      {
+        'Private key path': keyPath,
+        'Local name for this server': 'work',
+        'Server hostname or IP': 'workstation.example',
+        'SSH user on the server': 'alice',
+      },
+      [true],
+    );
+    const commands: Array<{ bin: string; args: string[] }> = [];
+
+    await setupAction(
+      {
+        interactive: true,
+        env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+        home: root,
+      },
+      io,
+      {
+        prompt,
+        run: (bin, args) => {
+          commands.push({ bin, args });
+          if (bin === 'ssh-keygen' && args.includes('-f')) {
+            writeFileSync(keyPath, 'private');
+            writeFileSync(`${keyPath}.pub`, 'ssh-ed25519 AAAAPUB talaria-agent\n');
+          }
+          return Promise.resolve(okResult());
+        },
+        testConnection: () => Promise.resolve(12),
+      },
+    );
+
+    const config = parseClientConfig(
+      JSON.parse(readFileSync(path.join(root, 'config', 'talaria', 'client.json'), 'utf8')),
+      { home: root },
+    );
+    expect(config.defaultHost).toBe('work');
+    expect(config.hosts.work).toMatchObject({
+      transport: 'openssh',
+      tailscaleHost: 'workstation.example',
+      sshUser: 'alice',
+      sshKey: keyPath,
+    });
+    expect(commands.some(({ bin }) => bin === 'ssh-keygen')).toBe(true);
+    expect(prompt.selections[1]?.choices[0]?.description).toContain('strongest isolation');
+    expect(err.join('\n')).toContain('connected to work (12 ms)');
+    expect(out.join('')).toContain('ssh-ed25519 AAAAPUB');
+  });
+
+  it('checks for tailscaled during interactive Tailscale server setup', async () => {
+    const prompt = new FakePrompter();
+    await expect(
+      setupAction(
+        {
+          role: 'server',
+          transport: 'tailscale-ssh',
+          allowedDir: [root],
+          interactive: true,
+          env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+          home: root,
+        },
+        io,
+        {
+          prompt,
+          run: (bin) => {
+            if (bin === 'tailscaled') return Promise.reject(new BinaryNotFoundError(bin));
+            return Promise.resolve(okResult());
+          },
+        },
+      ),
+    ).rejects.toThrow(/tailscaled is required/);
+  });
+
+  it('enables macOS Remote Login and installs the prompted controller key', async () => {
+    const key = 'ssh-ed25519 AAAAPUB controller';
+    const prompt = new FakePrompter({}, {}, [true, true]);
+    const privileged: Array<{ bin: string; args: string[] }> = [];
+
+    await setupAction(
+      {
+        role: 'server',
+        transport: 'openssh',
+        publicKey: key,
+        allowedDir: [root],
+        interactive: true,
+        env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+        home: root,
+      },
+      io,
+      {
+        prompt,
+        platform: 'darwin',
+        run: () => Promise.resolve(okResult()),
+        runInteractive: (bin, args) => {
+          privileged.push({ bin, args });
+          return Promise.resolve(0);
+        },
+      },
+    );
+
+    expect(privileged).toEqual([
+      { bin: 'sudo', args: ['/usr/sbin/systemsetup', '-setremotelogin', 'on'] },
+    ]);
+    expect(readFileSync(path.join(root, '.ssh', 'authorized_keys'), 'utf8')).toBe(
+      buildAuthorizedKeysLine(key) + '\n',
+    );
   });
 });

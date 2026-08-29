@@ -31,6 +31,19 @@ strongest command-level isolation. `tailscale-ssh` removes key distribution and 
 management, with the security tradeoff described below. Install Talaria, tmux, and the
 enabled tools (`claude`, `codex`, and so on) on the workstation in both modes.
 
+Run the guided setup on each machine:
+
+```sh
+talaria setup
+```
+
+Choose **client** on the machine that initiates sessions and **server** on the machine
+that runs the coding CLIs. The wizard explains the transport tradeoff, generates an
+OpenSSH client key, configures and optionally tests the connection, and can enable the
+SSH service and install the restricted public key on the server. In Tailscale SSH mode it
+checks `tailscale` (and `tailscaled` on the server) and offers to enable Tailscale SSH.
+The flags below remain available for non-interactive or repeatable setup.
+
 ### Option A: OpenSSH over Tailscale
 
 On the workstation:
@@ -46,9 +59,11 @@ talaria setup --role client --transport openssh \
   --host my-workstation --ssh-user user
 ```
 
-Add the printed line to the workstation user's `~/.ssh/authorized_keys` (create the file
-if needed). The dedicated key is restricted to `talaria serve`—no shell, port/agent/X11
-forwarding, or PTY:
+When using the wizard, paste the public key printed by client setup into the server setup
+prompt; Talaria creates `~/.ssh/authorized_keys` with safe permissions and adds the
+restricted entry. With non-interactive setup, add the printed line manually. The
+dedicated key is restricted to `talaria serve`—no shell, port/agent/X11 forwarding, or
+PTY:
 
 ```
 command="talaria serve",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... talaria-agent

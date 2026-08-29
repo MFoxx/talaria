@@ -9,7 +9,15 @@
  * wires them to the filesystem and `ssh-keygen`.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
+import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { clientConfigPath, serverConfigPath } from '../config/paths.js';
@@ -20,9 +28,11 @@ import {
 } from '../config/client-config.js';
 import { parseServerConfig } from '../config/server-config.js';
 import { AdapterRegistry } from '../adapters/registry.js';
+import { TalariaClient } from '../client/talaria-client.js';
 import { isTmuxAvailable } from '../server/tmux.js';
-import { runCommand } from '../util/exec.js';
+import { BinaryNotFoundError, runCommand } from '../util/exec.js';
 import type { Io } from './actions.js';
+import { ReadlineSetupPrompter, type SelectChoice, type SetupPrompter } from './setup-prompts.js';
 
 /** SSH forced command and restrictions applied to the agent key (§6.2). */
 export const FORCED_COMMAND = 'talaria serve';
@@ -106,12 +116,28 @@ export interface SetupCliOptions {
   sshUser?: string;
   hostAlias?: string;
   allowedDir?: string[];
+  /** Plain controller public key to authorize during OpenSSH server setup. */
+  publicKey?: string;
   skipKeygen?: boolean;
   force?: boolean;
+  /** Override TTY detection (primarily useful to callers and tests). */
+  interactive?: boolean;
   /** Environment for path resolution (tests). */
   env?: NodeJS.ProcessEnv;
   /** Home directory override (tests). */
   home?: string;
+}
+
+type CommandRunner = typeof runCommand;
+type InteractiveCommandRunner = (bin: string, args: string[]) => Promise<number | null>;
+
+export interface SetupDependencies {
+  prompt?: SetupPrompter;
+  run?: CommandRunner;
+  runInteractive?: InteractiveCommandRunner;
+  platform?: NodeJS.Platform;
+  getuid?: () => number;
+  testConnection?: (target: Parameters<typeof TalariaClient.overRemote>[0]) => Promise<number>;
 }
 
 function writeJsonFile(filePath: string, value: unknown): void {
@@ -124,122 +150,425 @@ const defaultIo: Io = {
   errLine: (text) => process.stderr.write(text + '\n'),
 };
 
-export async function setupAction(opts: SetupCliOptions = {}, io: Io = defaultIo): Promise<void> {
-  const env = opts.env ?? process.env;
-  const role: SetupRole = opts.role ?? 'both';
-  if (!['server', 'client', 'both'].includes(role)) {
-    throw new Error(`Invalid --role "${role}"; expected server, client, or both`);
+const ROLE_CHOICES: readonly SelectChoice<'client' | 'server'>[] = [
+  {
+    value: 'client',
+    label: 'Client',
+    description: 'Starts and reconnects to sessions on a remote Talaria server.',
+  },
+  {
+    value: 'server',
+    label: 'Server',
+    description: 'Accepts connections and runs Claude Code, Codex, and other local CLIs.',
+  },
+];
+
+const TRANSPORT_CHOICES: readonly SelectChoice<TransportKindType>[] = [
+  {
+    value: 'openssh',
+    label: 'OpenSSH (recommended)',
+    description:
+      'Uses a dedicated key locked to `talaria serve`; strongest isolation and works over any SSH route.',
+  },
+  {
+    value: 'tailscale-ssh',
+    label: 'Tailscale SSH',
+    description:
+      'Keyless tailnet authentication and simpler host keys, but policy cannot force only `talaria serve`.',
+  },
+];
+
+function defaultInteractiveCommand(bin: string, args: string[]): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, args, { stdio: 'inherit' });
+    child.once('error', reject);
+    child.once('exit', (code) => resolve(code));
+  });
+}
+
+async function binaryAvailable(bin: string, args: string[], run: CommandRunner): Promise<boolean> {
+  try {
+    await run(bin, args);
+    return true;
+  } catch (error) {
+    if (error instanceof BinaryNotFoundError) return false;
+    throw error;
   }
-  const transportResult = TransportKind.safeParse(opts.transport ?? 'openssh');
-  if (!transportResult.success) {
+}
+
+function publicKeyIdentity(publicKey: string): string {
+  if (publicKey.includes('\n') || publicKey.includes('\r')) {
+    throw new Error('Public key must be a single line');
+  }
+  const fields = publicKey.trim().split(/\s+/);
+  const type = fields[0];
+  const body = fields[1];
+  if (
+    !type ||
+    !/^(?:ssh-|ecdsa-|sk-)/.test(type) ||
+    !body ||
+    !/^[A-Za-z0-9+/]+={0,3}$/.test(body)
+  ) {
+    throw new Error('Expected a plain OpenSSH public key such as "ssh-ed25519 AAAA… comment"');
+  }
+  return `${type} ${body}`;
+}
+
+/** Install a controller key with Talaria's forced command and restrictive file modes. */
+export function installAuthorizedKey(publicKey: string, home: string): 'installed' | 'present' {
+  const identity = publicKeyIdentity(publicKey);
+  const sshDir = path.join(home, '.ssh');
+  const authorizedKeys = path.join(sshDir, 'authorized_keys');
+  const existing = existsSync(authorizedKeys) ? readFileSync(authorizedKeys, 'utf8') : '';
+  const matchingLines = existing.split(/\r?\n/).filter((line) => {
+    const fields = line.trim().split(/\s+/);
+    return fields.some((field, index) => `${field} ${fields[index + 1] ?? ''}` === identity);
+  });
+  const restrictedLine = buildAuthorizedKeysLine(publicKey);
+
+  if (matchingLines.includes(restrictedLine)) return 'present';
+  if (matchingLines.length > 0) {
     throw new Error(
-      `Invalid --transport "${String(opts.transport)}"; expected openssh or tailscale-ssh`,
+      "That key is already authorized without Talaria's exact restrictions; remove or restrict the existing entry first",
     );
   }
-  const transport = transportResult.data;
-  if (transport === 'tailscale-ssh' && opts.key !== undefined) {
-    throw new Error('--key applies only to the openssh transport');
-  }
-  if (transport === 'openssh' && opts.serverCommand !== undefined) {
-    throw new Error('--server-command applies only to the tailscale-ssh transport');
-  }
-  const home = opts.home ?? os.homedir();
-  const doServer = role === 'server' || role === 'both';
-  const doClient = role === 'client' || role === 'both';
 
-  io.errLine('talaria setup');
+  mkdirSync(sshDir, { recursive: true, mode: 0o700 });
+  chmodSync(sshDir, 0o700);
+  const prefix = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
+  appendFileSync(authorizedKeys, `${prefix}${restrictedLine}\n`, { mode: 0o600 });
+  chmodSync(authorizedKeys, 0o600);
+  return 'installed';
+}
 
-  const tmuxOk = await isTmuxAvailable();
-  io.errLine(
-    tmuxOk ? '  ✓ tmux found' : '  ✗ tmux not found — install it so sessions survive disconnects',
-  );
-
-  const keyPath = opts.key ?? path.join(home, '.ssh', 'talaria_agent_ed25519');
-
-  if (doServer) {
-    const allowedDirs = opts.allowedDir?.length ? opts.allowedDir : [path.join(home, 'projects')];
-    const serverConfig = buildServerConfig({ allowedDirs });
-    parseServerConfig(serverConfig, { env, home }); // validate before writing
-    const target = serverConfigPath(env);
-    if (existsSync(target) && !opts.force) {
-      io.errLine(`  • server config exists at ${target} (use --force to overwrite)`);
-    } else {
-      writeJsonFile(target, serverConfig);
-      io.errLine(`  ✓ wrote server config ${target}`);
+async function enableOpenSshServer(
+  platform: NodeJS.Platform,
+  run: CommandRunner,
+  runInteractive: InteractiveCommandRunner,
+  getuid: () => number,
+): Promise<string> {
+  if (platform === 'darwin') {
+    if (!(await binaryAvailable('/usr/sbin/sshd', ['-V'], run))) {
+      throw new Error('OpenSSH server is missing (/usr/sbin/sshd)');
     }
+    const status = await run('/usr/sbin/systemsetup', ['-getremotelogin']);
+    if (`${status.stdout}\n${status.stderr}`.toLowerCase().includes('remote login: on')) {
+      return 'Remote Login already enabled';
+    }
+    const code = await runInteractive('sudo', ['/usr/sbin/systemsetup', '-setremotelogin', 'on']);
+    if (code !== 0) throw new Error(`Could not enable Remote Login (exit ${String(code)})`);
+    return 'Remote Login enabled';
+  }
 
-    // Report tool availability for the configured tools.
-    const registry = AdapterRegistry.fromConfig(parseServerConfig(serverConfig, { env, home }));
-    for (const info of await registry.listWithAvailability()) {
-      io.errLine(
-        info.available
-          ? `  ✓ ${info.name}${info.version ? ` (${info.version})` : ''}`
-          : `  ✗ ${info.name} — ${info.error ?? 'unavailable'}`,
+  if (platform === 'linux') {
+    if (!(await binaryAvailable('sshd', ['-V'], run))) {
+      throw new Error(
+        "OpenSSH server is missing; install your distribution's openssh-server package",
       );
     }
-
-    if (transport === 'tailscale-ssh') {
-      io.errLine('  • enable Tailscale SSH on this workstation: tailscale set --ssh=true');
+    if (!(await binaryAvailable('systemctl', ['--version'], run))) {
+      throw new Error('systemctl is unavailable; enable and start sshd manually');
     }
-  }
-
-  if (doClient) {
-    if (transport === 'openssh' && !opts.skipKeygen && !existsSync(keyPath)) {
-      mkdirSync(path.dirname(keyPath), { recursive: true });
-      const result = await runCommand('ssh-keygen', [
-        '-t',
-        'ed25519',
-        '-f',
-        keyPath,
-        '-N',
-        '',
-        '-C',
-        'talaria-agent',
-      ]);
-      if (result.code !== 0) {
-        throw new Error(`ssh-keygen failed: ${result.stderr.trim() || `exit ${result.code}`}`);
+    let service: 'ssh.service' | 'sshd.service' | undefined;
+    for (const candidate of ['ssh.service', 'sshd.service'] as const) {
+      const result = await run('systemctl', ['cat', candidate]);
+      if (result.code === 0) {
+        service = candidate;
+        break;
       }
-      io.errLine(`  ✓ generated SSH key ${keyPath}`);
-    } else if (transport === 'openssh' && existsSync(keyPath)) {
-      io.errLine(`  • SSH key exists at ${keyPath}`);
     }
-
-    const common = {
-      hostAlias: opts.hostAlias ?? 'desktop',
-      tailscaleHost: opts.host ?? 'my-workstation',
-      sshUser: opts.sshUser ?? os.userInfo().username,
-    };
-    const clientConfig =
-      transport === 'tailscale-ssh'
-        ? buildClientConfig({
-            ...common,
-            transport,
-            ...(opts.serverCommand ? { serverCommand: opts.serverCommand } : {}),
-          })
-        : buildClientConfig({ ...common, transport, sshKey: keyPath });
-    parseClientConfig(clientConfig, { home }); // validate before writing
-    const target = clientConfigPath(env);
-    if (existsSync(target) && !opts.force) {
-      io.errLine(`  • client config exists at ${target} (use --force to overwrite)`);
-    } else {
-      writeJsonFile(target, clientConfig);
-      io.errLine(`  ✓ wrote client config ${target}`);
-    }
-
-    if (transport === 'tailscale-ssh') {
-      io.errLine('  • no SSH key was generated; authentication uses the client tailnet identity');
-      io.errLine('  • restrict this client, workstation, and SSH user in the tailnet policy');
-    }
+    if (!service) throw new Error('Could not find ssh.service or sshd.service');
+    const [active, enabled] = await Promise.all([
+      run('systemctl', ['is-active', '--quiet', service]),
+      run('systemctl', ['is-enabled', '--quiet', service]),
+    ]);
+    if (active.code === 0 && enabled.code === 0) return `${service} already enabled and running`;
+    const command = ['systemctl', 'enable', '--now', service];
+    const [bin, args] = getuid() === 0 ? [command[0], command.slice(1)] : ['sudo', command];
+    if (!bin) throw new Error('Could not construct the systemctl command');
+    const code = await runInteractive(bin, args);
+    if (code !== 0) throw new Error(`Could not enable ${service} (exit ${String(code)})`);
+    return `${service} enabled and started`;
   }
 
-  if (!doClient || transport === 'tailscale-ssh') return;
+  throw new Error('Automatic OpenSSH server setup is supported on macOS and systemd Linux only');
+}
 
-  // OpenSSH only: print the authorized_keys line (stdout, so it can be piped/copied).
-  const pubPath = `${keyPath}.pub`;
-  if (existsSync(pubPath)) {
-    io.errLine('\nAdd this line to ~/.ssh/authorized_keys on the workstation:');
-    io.write(buildAuthorizedKeysLine(readFileSync(pubPath, 'utf8')) + '\n');
-  } else {
-    io.errLine(`\nNo public key at ${pubPath}; generate one, then add the forced-command line.`);
+async function enableTailscaleSsh(
+  platform: NodeJS.Platform,
+  runInteractive: InteractiveCommandRunner,
+  getuid: () => number,
+): Promise<void> {
+  const command = ['tailscale', 'set', '--ssh=true'];
+  const [bin, args] =
+    platform === 'linux' && getuid() !== 0 ? ['sudo', command] : [command[0], command.slice(1)];
+  if (!bin) throw new Error('Could not construct the Tailscale command');
+  const code = await runInteractive(bin, args);
+  if (code !== 0) throw new Error(`Could not enable Tailscale SSH (exit ${String(code)})`);
+}
+
+async function shouldWrite(
+  target: string,
+  force: boolean | undefined,
+  prompt: SetupPrompter | undefined,
+  io: Io,
+): Promise<boolean> {
+  if (!existsSync(target) || force) return true;
+  if (prompt && (await prompt.confirm(`Config exists at ${target}. Overwrite it?`, false)))
+    return true;
+  io.errLine(`  • config exists at ${target} (use --force to overwrite)`);
+  return false;
+}
+
+export async function setupAction(
+  opts: SetupCliOptions = {},
+  io: Io = defaultIo,
+  dependencies: SetupDependencies = {},
+): Promise<void> {
+  const env = opts.env ?? process.env;
+  const home = opts.home ?? os.homedir();
+  const interactive =
+    opts.interactive ??
+    (process.stdin.isTTY === true &&
+      process.stderr.isTTY === true &&
+      (opts.role === undefined || opts.transport === undefined));
+  const ownsPrompt = interactive && dependencies.prompt === undefined;
+  const prompt = interactive
+    ? (dependencies.prompt ?? new ReadlineSetupPrompter(process.stdin, process.stderr))
+    : undefined;
+  const run = dependencies.run ?? runCommand;
+  const runInteractive = dependencies.runInteractive ?? defaultInteractiveCommand;
+  const platform = dependencies.platform ?? process.platform;
+  const getuid = dependencies.getuid ?? (() => process.getuid?.() ?? -1);
+
+  try {
+    io.errLine('talaria setup');
+
+    const role: SetupRole =
+      opts.role ??
+      (prompt ? await prompt.select('What do you want to configure?', ROLE_CHOICES) : 'both');
+    if (!['server', 'client', 'both'].includes(role)) {
+      throw new Error(`Invalid --role "${role}"; expected server, client, or both`);
+    }
+    const requestedTransport =
+      opts.transport ??
+      (prompt
+        ? await prompt.select('How should the client connect to this server?', TRANSPORT_CHOICES)
+        : 'openssh');
+    const transportResult = TransportKind.safeParse(requestedTransport);
+    if (!transportResult.success) {
+      throw new Error(
+        `Invalid --transport "${String(requestedTransport)}"; expected openssh or tailscale-ssh`,
+      );
+    }
+    const transport = transportResult.data;
+    if (transport === 'tailscale-ssh' && opts.key !== undefined) {
+      throw new Error('--key applies only to the openssh transport');
+    }
+    if (transport === 'openssh' && opts.serverCommand !== undefined) {
+      throw new Error('--server-command applies only to the tailscale-ssh transport');
+    }
+
+    const doServer = role === 'server' || role === 'both';
+    const doClient = role === 'client' || role === 'both';
+    const keyPath =
+      opts.key ??
+      (doClient && prompt && transport === 'openssh'
+        ? await prompt.input('Private key path', path.join(home, '.ssh', 'talaria_agent_ed25519'))
+        : path.join(home, '.ssh', 'talaria_agent_ed25519'));
+
+    if (prompt) {
+      if (transport === 'tailscale-ssh') {
+        if (!(await binaryAvailable('tailscale', ['version'], run))) {
+          throw new Error(
+            'Tailscale CLI is not installed. Install the standalone CLI build, then run setup again.',
+          );
+        }
+        io.errLine('  ✓ tailscale CLI found');
+        if (doClient) {
+          const wrapper = await run('tailscale', ['ssh', '--help']);
+          if (wrapper.code !== 0) {
+            throw new Error(
+              "`tailscale ssh` is unavailable. On macOS, install Tailscale's standalone build instead of the App Store build.",
+            );
+          }
+          io.errLine('  ✓ tailscale ssh wrapper found');
+        }
+        if (doServer) {
+          if (!(await binaryAvailable('tailscaled', ['--version'], run))) {
+            throw new Error(
+              'tailscaled is required on a Tailscale SSH server but was not found in PATH',
+            );
+          }
+          io.errLine('  ✓ tailscaled found');
+        }
+      } else if (doClient) {
+        for (const binary of ['ssh', 'ssh-keygen']) {
+          if (!(await binaryAvailable(binary, ['-V'], run))) {
+            throw new Error(`${binary} is required for the OpenSSH client setup`);
+          }
+          io.errLine(`  ✓ ${binary} found`);
+        }
+      }
+    }
+
+    if (doServer) {
+      const defaultAllowedDir = path.join(home, 'projects');
+      const allowedDirs = opts.allowedDir?.length
+        ? opts.allowedDir
+        : [
+            prompt
+              ? await prompt.input('Directory Talaria may run tools in', defaultAllowedDir)
+              : defaultAllowedDir,
+          ];
+      const serverConfig = buildServerConfig({ allowedDirs });
+      const parsedServer = parseServerConfig(serverConfig, { env, home });
+      const target = serverConfigPath(env);
+      if (await shouldWrite(target, opts.force, prompt, io)) {
+        writeJsonFile(target, serverConfig);
+        io.errLine(`  ✓ wrote server config ${target}`);
+      }
+
+      const tmuxOk = await isTmuxAvailable();
+      io.errLine(
+        tmuxOk
+          ? '  ✓ tmux found'
+          : '  ✗ tmux not found — install it so sessions survive disconnects',
+      );
+      const registry = AdapterRegistry.fromConfig(parsedServer);
+      for (const info of await registry.listWithAvailability()) {
+        io.errLine(
+          info.available
+            ? `  ✓ ${info.name}${info.version ? ` (${info.version})` : ''}`
+            : `  ✗ ${info.name} — ${info.error ?? 'unavailable'}`,
+        );
+      }
+
+      if (transport === 'openssh') {
+        if (prompt && (await prompt.confirm('Enable the OpenSSH server / Remote Login now?'))) {
+          io.errLine(`  ✓ ${await enableOpenSshServer(platform, run, runInteractive, getuid)}`);
+        } else if (!prompt) {
+          io.errLine('  • ensure the OpenSSH server / Remote Login is enabled');
+        }
+
+        const publicKey =
+          opts.publicKey ??
+          (prompt
+            ? await prompt.input('Controller public key (leave blank to install it later)')
+            : '');
+        if (publicKey) {
+          const confirmed =
+            !prompt ||
+            (await prompt.confirm(
+              `Authorize this key in ${path.join(home, '.ssh', 'authorized_keys')}?`,
+            ));
+          if (confirmed) {
+            const result = installAuthorizedKey(publicKey, home);
+            io.errLine(
+              result === 'installed'
+                ? '  ✓ installed restricted controller key'
+                : '  • restricted controller key is already installed',
+            );
+          }
+        } else if (prompt) {
+          io.errLine('  • rerun setup with --public-key after generating the key on the client');
+        }
+      } else if (prompt && (await prompt.confirm('Enable Tailscale SSH on this server now?'))) {
+        await enableTailscaleSsh(platform, runInteractive, getuid);
+        io.errLine('  ✓ Tailscale SSH enabled');
+        io.errLine('  • allow this machine and OS user in your tailnet SSH policy');
+      } else {
+        io.errLine('  • enable Tailscale SSH later with: tailscale set --ssh=true');
+      }
+    }
+
+    if (doClient) {
+      if (transport === 'openssh' && !opts.skipKeygen && !existsSync(keyPath)) {
+        mkdirSync(path.dirname(keyPath), { recursive: true, mode: 0o700 });
+        const result = await run('ssh-keygen', [
+          '-t',
+          'ed25519',
+          '-f',
+          keyPath,
+          '-N',
+          '',
+          '-C',
+          'talaria-agent',
+        ]);
+        if (result.code !== 0) {
+          throw new Error(`ssh-keygen failed: ${result.stderr.trim() || `exit ${result.code}`}`);
+        }
+        io.errLine(`  ✓ generated SSH key ${keyPath}`);
+      } else if (transport === 'openssh' && existsSync(keyPath)) {
+        io.errLine(`  • SSH key exists at ${keyPath}`);
+      }
+
+      const common = {
+        hostAlias:
+          opts.hostAlias ??
+          (prompt ? await prompt.input('Local name for this server', 'desktop') : 'desktop'),
+        tailscaleHost:
+          opts.host ??
+          (prompt
+            ? await prompt.input('Server hostname or IP', 'my-workstation')
+            : 'my-workstation'),
+        sshUser:
+          opts.sshUser ??
+          (prompt
+            ? await prompt.input('SSH user on the server', os.userInfo().username)
+            : os.userInfo().username),
+      };
+      const clientConfig =
+        transport === 'tailscale-ssh'
+          ? buildClientConfig({
+              ...common,
+              transport,
+              ...(opts.serverCommand ? { serverCommand: opts.serverCommand } : {}),
+            })
+          : buildClientConfig({ ...common, transport, sshKey: keyPath });
+      const parsedClient = parseClientConfig(clientConfig, { home });
+      const target = clientConfigPath(env);
+      const wroteClient = await shouldWrite(target, opts.force, prompt, io);
+      if (wroteClient) {
+        writeJsonFile(target, clientConfig);
+        io.errLine(`  ✓ wrote client config ${target}`);
+      }
+
+      if (transport === 'tailscale-ssh') {
+        io.errLine('  • no SSH key was generated; authentication uses the client tailnet identity');
+        io.errLine('  • restrict this client, server, and SSH user in the tailnet policy');
+      } else {
+        const pubPath = `${keyPath}.pub`;
+        if (existsSync(pubPath)) {
+          const publicKey = readFileSync(pubPath, 'utf8').trim();
+          io.errLine('\nPaste this public key into `talaria setup` on the server:');
+          io.write(publicKey + '\n');
+          io.errLine('\nOr install this restricted line manually in ~/.ssh/authorized_keys:');
+          io.write(buildAuthorizedKeysLine(publicKey) + '\n');
+        } else {
+          io.errLine(`\nNo public key at ${pubPath}; generate one before authorizing the client.`);
+        }
+      }
+
+      if (prompt && wroteClient && (await prompt.confirm('Test the connection now?', true))) {
+        const host = parsedClient.hosts[common.hostAlias];
+        if (!host) throw new Error(`Generated config is missing host ${common.hostAlias}`);
+        try {
+          const targetConfig = { alias: common.hostAlias, ...host };
+          const latency = dependencies.testConnection
+            ? await dependencies.testConnection(targetConfig)
+            : await TalariaClient.overRemote(targetConfig).ping();
+          io.errLine(`  ✓ connected to ${common.hostAlias} (${latency} ms)`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          io.errLine(`  ✗ connection test failed: ${message}`);
+          io.errLine('    The config was saved; finish the server setup and run `talaria ping`.');
+        }
+      }
+    }
+
+    io.errLine('\nSetup complete.');
+  } finally {
+    if (ownsPrompt) prompt?.close();
   }
 }
