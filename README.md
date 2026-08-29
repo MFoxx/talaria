@@ -66,34 +66,28 @@ dedicated key is restricted to `talaria serve`—no shell, port/agent/X11 forwar
 PTY:
 
 ```
-command="talaria serve",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... talaria-agent
+command="PATH='/Users/me/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/absolute/node/bin:/absolute/talaria/dist' '/absolute/node/bin/node' '/absolute/talaria/dist/cli.js' serve",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... talaria-agent
 ```
 
 #### Running OpenSSH mode from a clone
 
-`npm link` (or a global npm install) makes the printed `command="talaria serve"` entry
-work. If you run Talaria with `node ./dist/cli.js` instead, the forced command needs
-absolute paths and an explicit `PATH`. SSH forced commands are non-interactive and do
-not load your shell startup files, so a tool such as `claude` can otherwise appear to be
-missing even though it works in your terminal.
+SSH forced commands do not load shell startup files. Server setup therefore captures the
+current executable `PATH` (including the directories used to find `claude`, `codex`, and
+other tools) and writes absolute paths for both Node and Talaria's CLI entry file. Existing
+legacy entries containing only `command="talaria serve"` are upgraded when the same key is
+authorized again.
 
-On the workstation, find the relevant paths:
+For a clone, build and link Talaria before running server setup so the wizard can resolve
+the compiled CLI:
 
 ```sh
-command -v node
-command -v claude # and/or: command -v codex
+npm run build
+npm link
+talaria setup
 ```
 
-Then replace the `command="..."` portion of the `authorized_keys` entry with a command
-like this, keeping the restrictions and public key unchanged:
-
-```
-command="PATH=/Users/me/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin /absolute/path/to/node /absolute/path/to/talaria/dist/cli.js serve",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... talaria-agent
-```
-
-`PATH` entries are directories, not executable paths. Include the parent directory of
-every enabled tool (`claude`, `codex`, and so on) and use the exact absolute Node path
-from `command -v node`.
+Running server setup directly through `tsx src/cli.ts` is rejected because plain Node
+cannot execute that TypeScript source when sshd later invokes the forced command.
 
 ### Option B: Tailscale SSH
 

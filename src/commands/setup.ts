@@ -2,8 +2,8 @@
  * `talaria setup` (ARCHITECTURE §9.3, §11).
  *
  * Bootstraps a machine for either OpenSSH or Tailscale SSH. OpenSSH generates a
- * dedicated key and prints a locked-down `authorized_keys` line; Tailscale SSH delegates
- * authentication to the tailnet and prints the required host/policy guidance.
+ * dedicated client key and installs a self-contained forced command on the server;
+ * Tailscale SSH delegates authentication to the tailnet and prints policy guidance.
  *
  * The pure builders (config objects, authorized_keys line) are unit-tested; the action
  * wires them to the filesystem and `ssh-keygen`.
@@ -15,6 +15,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -43,9 +44,39 @@ export const KEY_RESTRICTIONS = [
   'no-pty',
 ] as const;
 
-/** Build the `~/.ssh/authorized_keys` line that locks the agent key to `talaria serve`. */
-export function buildAuthorizedKeysLine(publicKey: string): string {
-  return `command="${FORCED_COMMAND}",${KEY_RESTRICTIONS.join(',')} ${publicKey.trim()}`;
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function authorizedKeysQuote(command: string): string {
+  return command.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+}
+
+export interface TalariaForcedCommandOptions {
+  nodePath: string;
+  cliPath: string;
+  executablePath: string;
+}
+
+/** Build the self-contained command used by sshd's non-interactive forced-command shell. */
+export function buildTalariaForcedCommand(opts: TalariaForcedCommandOptions): string {
+  if (!path.isAbsolute(opts.nodePath) || !path.isAbsolute(opts.cliPath)) {
+    throw new Error('The Node and Talaria CLI paths used by OpenSSH must be absolute');
+  }
+  const pathEntries = [
+    ...opts.executablePath.split(path.delimiter),
+    path.dirname(opts.nodePath),
+    path.dirname(opts.cliPath),
+  ].filter((entry, index, entries) => entry.length > 0 && entries.indexOf(entry) === index);
+  return `PATH=${shellQuote(pathEntries.join(path.delimiter))} ${shellQuote(opts.nodePath)} ${shellQuote(opts.cliPath)} serve`;
+}
+
+/** Build the `~/.ssh/authorized_keys` line that locks the agent key to one command. */
+export function buildAuthorizedKeysLine(
+  publicKey: string,
+  forcedCommand: string = FORCED_COMMAND,
+): string {
+  return `command="${authorizedKeysQuote(forcedCommand)}",${KEY_RESTRICTIONS.join(',')} ${publicKey.trim()}`;
 }
 
 /** Default server config object (validated before it's written). */
@@ -138,6 +169,10 @@ export interface SetupDependencies {
   platform?: NodeJS.Platform;
   getuid?: () => number;
   testConnection?: (target: Parameters<typeof TalariaClient.overRemote>[0]) => Promise<number>;
+  /** Absolute runtime paths for deterministic setup tests. */
+  nodePath?: string;
+  cliPath?: string;
+  executablePath?: string;
 }
 
 function writeJsonFile(filePath: string, value: unknown): void {
@@ -214,20 +249,60 @@ function publicKeyIdentity(publicKey: string): string {
   return `${type} ${body}`;
 }
 
+function resolveTalariaForcedCommand(
+  env: NodeJS.ProcessEnv,
+  dependencies: SetupDependencies,
+): string {
+  const nodePath = dependencies.nodePath ?? realpathSync(process.execPath);
+  const cliArgument = dependencies.cliPath ?? process.argv[1];
+  if (!cliArgument) {
+    throw new Error('Could not determine the Talaria CLI path; run setup through the talaria CLI');
+  }
+  const cliPath = dependencies.cliPath ?? realpathSync(cliArgument);
+  if (path.extname(cliPath) === '.ts') {
+    throw new Error(
+      'OpenSSH setup needs a built Talaria CLI. Run `npm run build && npm link`, then run `talaria setup`.',
+    );
+  }
+  const executablePath = dependencies.executablePath ?? env.PATH ?? '/usr/local/bin:/usr/bin:/bin';
+  return buildTalariaForcedCommand({ nodePath, cliPath, executablePath });
+}
+
 /** Install a controller key with Talaria's forced command and restrictive file modes. */
-export function installAuthorizedKey(publicKey: string, home: string): 'installed' | 'present' {
+export function installAuthorizedKey(
+  publicKey: string,
+  home: string,
+  forcedCommand: string = FORCED_COMMAND,
+): 'installed' | 'updated' | 'present' {
   const identity = publicKeyIdentity(publicKey);
   const sshDir = path.join(home, '.ssh');
   const authorizedKeys = path.join(sshDir, 'authorized_keys');
   const existing = existsSync(authorizedKeys) ? readFileSync(authorizedKeys, 'utf8') : '';
-  const matchingLines = existing.split(/\r?\n/).filter((line) => {
-    const fields = line.trim().split(/\s+/);
-    return fields.some((field, index) => `${field} ${fields[index + 1] ?? ''}` === identity);
-  });
-  const restrictedLine = buildAuthorizedKeysLine(publicKey);
+  const existingLines = existing.split(/\r?\n/);
+  const matchingIndexes = existingLines
+    .map((line, lineIndex) => {
+      const fields = line.trim().split(/\s+/);
+      return fields.some((field, index) => `${field} ${fields[index + 1] ?? ''}` === identity)
+        ? lineIndex
+        : -1;
+    })
+    .filter((lineIndex) => lineIndex !== -1);
+  const restrictedLine = buildAuthorizedKeysLine(publicKey, forcedCommand);
 
-  if (matchingLines.includes(restrictedLine)) return 'present';
-  if (matchingLines.length > 0) {
+  if (matchingIndexes.some((lineIndex) => existingLines[lineIndex] === restrictedLine)) {
+    return 'present';
+  }
+  if (matchingIndexes.length > 0) {
+    const legacyPrefix = `command="${FORCED_COMMAND}",${KEY_RESTRICTIONS.join(',')} `;
+    const legacyIndex = matchingIndexes.find((lineIndex) =>
+      existingLines[lineIndex]?.startsWith(legacyPrefix),
+    );
+    if (legacyIndex !== undefined) {
+      existingLines[legacyIndex] = restrictedLine;
+      writeFileSync(authorizedKeys, existingLines.join('\n'), { mode: 0o600 });
+      chmodSync(authorizedKeys, 0o600);
+      return 'updated';
+    }
     throw new Error(
       "That key is already authorized without Talaria's exact restrictions; remove or restrict the existing entry first",
     );
@@ -371,6 +446,10 @@ export async function setupAction(
 
     const doServer = role === 'server' || role === 'both';
     const doClient = role === 'client' || role === 'both';
+    const openSshServerCommand =
+      doServer && transport === 'openssh'
+        ? resolveTalariaForcedCommand(env, dependencies)
+        : undefined;
     const keyPath =
       opts.key ??
       (doClient && prompt && transport === 'openssh'
@@ -463,11 +542,14 @@ export async function setupAction(
               `Authorize this key in ${path.join(home, '.ssh', 'authorized_keys')}?`,
             ));
           if (confirmed) {
-            const result = installAuthorizedKey(publicKey, home);
+            if (!openSshServerCommand) throw new Error('OpenSSH server command was not resolved');
+            const result = installAuthorizedKey(publicKey, home, openSshServerCommand);
             io.errLine(
               result === 'installed'
                 ? '  ✓ installed restricted controller key'
-                : '  • restricted controller key is already installed',
+                : result === 'updated'
+                  ? '  ✓ updated legacy controller key with the complete server command'
+                  : '  • restricted controller key is already installed',
             );
           }
         } else if (prompt) {
@@ -543,8 +625,6 @@ export async function setupAction(
           const publicKey = readFileSync(pubPath, 'utf8').trim();
           io.errLine('\nPaste this public key into `talaria setup` on the server:');
           io.write(publicKey + '\n');
-          io.errLine('\nOr install this restricted line manually in ~/.ssh/authorized_keys:');
-          io.write(buildAuthorizedKeysLine(publicKey) + '\n');
         } else {
           io.errLine(`\nNo public key at ${pubPath}; generate one before authorizing the client.`);
         }

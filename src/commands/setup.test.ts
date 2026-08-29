@@ -6,6 +6,7 @@ import {
   buildAuthorizedKeysLine,
   buildClientConfig,
   buildServerConfig,
+  buildTalariaForcedCommand,
   installAuthorizedKey,
   setupAction,
 } from './setup.js';
@@ -50,10 +51,15 @@ class FakePrompter implements SetupPrompter {
 }
 
 describe('buildAuthorizedKeysLine', () => {
-  it('locks the key to talaria serve with restrictions', () => {
-    const line = buildAuthorizedKeysLine('ssh-ed25519 AAAAKEY talaria-agent\n');
+  it('locks the key to an absolute Talaria command with the tool PATH', () => {
+    const command = buildTalariaForcedCommand({
+      nodePath: '/opt/node/bin/node',
+      cliPath: '/opt/talaria/dist/cli.js',
+      executablePath: '/home/me/.local/bin:/usr/bin',
+    });
+    const line = buildAuthorizedKeysLine('ssh-ed25519 AAAAKEY talaria-agent\n', command);
     expect(line).toBe(
-      'command="talaria serve",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAAKEY talaria-agent',
+      "command=\"PATH='/home/me/.local/bin:/usr/bin:/opt/node/bin:/opt/talaria/dist' '/opt/node/bin/node' '/opt/talaria/dist/cli.js' serve\",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAAKEY talaria-agent",
     );
   });
 });
@@ -84,6 +90,25 @@ describe('installAuthorizedKey', () => {
       writeFileSync(path.join(sshDir, 'authorized_keys'), 'ssh-ed25519 AAAAPUB unrestricted\n');
       expect(() => installAuthorizedKey('ssh-ed25519 AAAAPUB talaria-agent', home)).toThrow(
         /already authorized without/,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('upgrades the legacy talaria serve entry', () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'talaria-authorized-key-'));
+    try {
+      const key = 'ssh-ed25519 AAAAPUB talaria-agent';
+      installAuthorizedKey(key, home);
+      const command = buildTalariaForcedCommand({
+        nodePath: '/opt/node/bin/node',
+        cliPath: '/opt/talaria/dist/cli.js',
+        executablePath: '/tools/bin:/usr/bin',
+      });
+      expect(installAuthorizedKey(key, home, command)).toBe('updated');
+      expect(readFileSync(path.join(home, '.ssh', 'authorized_keys'), 'utf8')).toBe(
+        buildAuthorizedKeysLine(key, command) + '\n',
       );
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -159,7 +184,7 @@ describe('setupAction', () => {
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  it('writes valid configs and prints the authorized_keys line', async () => {
+  it('writes valid configs and prints the public key', async () => {
     const keyPath = path.join(root, 'key');
     writeFileSync(`${keyPath}.pub`, 'ssh-ed25519 AAAAPUB talaria-agent\n');
     const env = { XDG_CONFIG_HOME: path.join(root, 'config') };
@@ -183,7 +208,6 @@ describe('setupAction', () => {
     const client = parseClientConfig(JSON.parse(readFileSync(clientJson, 'utf8')));
     expect(client.hosts.desktop?.tailscaleHost).toBe('workstation');
 
-    expect(out.join('')).toContain('command="talaria serve"');
     expect(out.join('')).toContain('ssh-ed25519 AAAAPUB');
   });
 
@@ -365,6 +389,9 @@ describe('setupAction', () => {
       {
         prompt,
         platform: 'darwin',
+        nodePath: '/opt/node/bin/node',
+        cliPath: '/opt/talaria/dist/cli.js',
+        executablePath: '/tools/claude/bin:/tools/codex/bin:/usr/bin',
         run: () => Promise.resolve(okResult()),
         runInteractive: (bin, args) => {
           privileged.push({ bin, args });
@@ -377,7 +404,14 @@ describe('setupAction', () => {
       { bin: 'sudo', args: ['/usr/sbin/systemsetup', '-setremotelogin', 'on'] },
     ]);
     expect(readFileSync(path.join(root, '.ssh', 'authorized_keys'), 'utf8')).toBe(
-      buildAuthorizedKeysLine(key) + '\n',
+      buildAuthorizedKeysLine(
+        key,
+        buildTalariaForcedCommand({
+          nodePath: '/opt/node/bin/node',
+          cliPath: '/opt/talaria/dist/cli.js',
+          executablePath: '/tools/claude/bin:/tools/codex/bin:/usr/bin',
+        }),
+      ) + '\n',
     );
   });
 });
