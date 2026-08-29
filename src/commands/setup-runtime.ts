@@ -13,6 +13,27 @@ const TOOL_COMMANDS: Record<BuiltinToolName, string> = {
   cursor: 'agent',
 };
 
+/** Every built-in tool Talaria can pin, in the order shown during setup. */
+export const BUILTIN_TOOL_NAMES = Object.keys(TOOL_COMMANDS) as BuiltinToolName[];
+
+/** The executable a built-in tool is invoked through (used for PATH detection). */
+export function builtinToolCommand(name: BuiltinToolName): string {
+  return TOOL_COMMANDS[name];
+}
+
+/** Whether a built-in tool's executable resolves on PATH right now. */
+export async function isBuiltinToolAvailable(
+  name: BuiltinToolName,
+  run: CommandRunner,
+): Promise<boolean> {
+  try {
+    const result = await run('/usr/bin/which', [TOOL_COMMANDS[name]]);
+    return result.code === 0 && result.stdout.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
 const SYSTEM_PATH_DIRS = [
   '/opt/homebrew/bin',
   '/usr/local/bin',

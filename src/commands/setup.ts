@@ -33,14 +33,27 @@ import { isTmuxAvailable } from '../server/tmux.js';
 import { runCommand } from '../util/exec.js';
 import { quoteShellWord } from '../util/shell.js';
 import type { Io } from './actions.js';
-import { InquirerSetupPrompter, type SelectChoice, type SetupPrompter } from './setup-prompts.js';
+import {
+  InquirerSetupPrompter,
+  type CheckboxChoice,
+  type SelectChoice,
+  type SetupPrompter,
+} from './setup-prompts.js';
 import {
   createMacOsIsolationPlan,
   provisionMacOsIsolation,
   TALARIA_ACCOUNT,
   type MacOsIsolationPlan,
 } from './macos-isolation.js';
-import { resolveSetupRuntime, type BuiltinToolBins, type SetupRuntime } from './setup-runtime.js';
+import {
+  BUILTIN_TOOL_NAMES,
+  builtinToolCommand,
+  isBuiltinToolAvailable,
+  resolveSetupRuntime,
+  type BuiltinToolBins,
+  type BuiltinToolName,
+  type SetupRuntime,
+} from './setup-runtime.js';
 import {
   binaryAvailable,
   checkSetupPrerequisites,
@@ -217,6 +230,52 @@ const ROLE_CHOICES: readonly SelectChoice<'client' | 'server'>[] = [
     description: 'Accepts connections and runs Claude Code, Codex, and other local CLIs.',
   },
 ];
+
+const TOOL_LABELS: Record<BuiltinToolName, { label: string; description: string }> = {
+  'claude-code': { label: 'Claude Code', description: "Anthropic's Claude Code CLI (`claude`)." },
+  codex: { label: 'Codex', description: "OpenAI's Codex CLI (`codex`)." },
+  cursor: { label: 'Cursor', description: "Cursor's agent CLI (`agent`)." },
+};
+
+/**
+ * Ask which built-in tools this server should run, pre-selecting the ones already on PATH so
+ * setup does not later fail resolving a tool the operator never intended to install.
+ */
+async function selectServerTools(
+  prompt: SetupPrompter,
+  run: CommandRunner,
+  io: Io,
+): Promise<string[]> {
+  const availability = await Promise.all(
+    BUILTIN_TOOL_NAMES.map(async (name) => ({
+      name,
+      available: await isBuiltinToolAvailable(name, run),
+    })),
+  );
+  const choices: CheckboxChoice<BuiltinToolName>[] = availability.map(({ name, available }) => ({
+    value: name,
+    label: available
+      ? TOOL_LABELS[name].label
+      : `${TOOL_LABELS[name].label} — ${builtinToolCommand(name)} not found in PATH`,
+    description: TOOL_LABELS[name].description,
+    checked: available,
+  }));
+  const selected = await prompt.checkbox('Which CLI tools should this server run?', choices);
+  if (selected.length === 0) {
+    throw new Error(
+      'No tools selected. Install at least one supported CLI (claude, codex, or agent) and rerun setup.',
+    );
+  }
+  const missing = selected.filter(
+    (name) => !availability.find((entry) => entry.name === name)?.available,
+  );
+  for (const name of missing) {
+    io.errLine(
+      `  ⚠ ${builtinToolCommand(name)} is not on PATH yet; install it before starting sessions.`,
+    );
+  }
+  return selected;
+}
 
 const TRANSPORT_CHOICES: readonly SelectChoice<TransportKindType>[] = [
   {
@@ -538,7 +597,16 @@ async function configureServer(context: SetupWorkflowContext): Promise<string> {
           ? await prompt.input('Directory Talaria may run tools in', defaultAllowedDir)
           : defaultAllowedDir,
       ];
-  const tools = opts.tool?.length ? opts.tool : ['claude-code', 'codex'];
+  let tools: string[];
+  if (opts.tool?.length) {
+    tools = opts.tool;
+  } else if (prompt) {
+    tools = await selectServerTools(prompt, run, io);
+  } else {
+    throw new Error(
+      'Specify which tools to configure with --tool (claude-code, codex, and/or cursor) for non-interactive server setup.',
+    );
+  }
   for (const tool of tools) {
     if (tool !== 'claude-code' && tool !== 'codex' && tool !== 'cursor') {
       throw new Error(`Unsupported setup tool ${tool}; expected claude-code, codex, or cursor`);

@@ -1,4 +1,4 @@
-import { confirm, input, select } from '@inquirer/prompts';
+import { checkbox, confirm, input, select } from '@inquirer/prompts';
 import type { Readable, Writable } from 'node:stream';
 
 export interface SelectChoice<T extends string> {
@@ -7,9 +7,15 @@ export interface SelectChoice<T extends string> {
   description: string;
 }
 
+export interface CheckboxChoice<T extends string> extends SelectChoice<T> {
+  /** Whether the option starts selected. */
+  checked?: boolean;
+}
+
 /** Small prompt surface kept injectable so setup flows can be tested without a TTY. */
 export interface SetupPrompter {
   select<T extends string>(question: string, choices: readonly SelectChoice<T>[]): Promise<T>;
+  checkbox<T extends string>(question: string, choices: readonly CheckboxChoice<T>[]): Promise<T[]>;
   input(question: string, defaultValue?: string): Promise<string>;
   confirm(question: string, defaultValue?: boolean): Promise<boolean>;
   close(): void;
@@ -33,6 +39,24 @@ export class InquirerSetupPrompter implements SetupPrompter {
           value: choice.value,
           name: choice.label,
           description: choice.description,
+        })),
+      },
+      { input: this.inputStream, output: this.output },
+    );
+  }
+
+  async checkbox<T extends string>(
+    question: string,
+    choices: readonly CheckboxChoice<T>[],
+  ): Promise<T[]> {
+    return checkbox(
+      {
+        message: question,
+        choices: choices.map((choice) => ({
+          value: choice.value,
+          name: choice.label,
+          description: choice.description,
+          checked: choice.checked ?? false,
         })),
       },
       { input: this.inputStream, output: this.output },

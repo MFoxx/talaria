@@ -13,7 +13,7 @@ import {
 import { parseClientConfig } from '../config/client-config.js';
 import { parseServerConfig } from '../config/server-config.js';
 import type { Io } from './actions.js';
-import type { SelectChoice, SetupPrompter } from './setup-prompts.js';
+import type { CheckboxChoice, SelectChoice, SetupPrompter } from './setup-prompts.js';
 import { BinaryNotFoundError, type RunResult } from '../util/exec.js';
 
 const okResult = (stdout = ''): RunResult => ({
@@ -25,11 +25,14 @@ const okResult = (stdout = ''): RunResult => ({
 
 class FakePrompter implements SetupPrompter {
   readonly selections: Array<{ question: string; choices: readonly SelectChoice<string>[] }> = [];
+  readonly checkboxCalls: Array<{ question: string; choices: readonly CheckboxChoice<string>[] }> =
+    [];
 
   constructor(
     private readonly selected: Record<string, string> = {},
     private readonly inputs: Record<string, string> = {},
     private readonly confirmations: boolean[] = [],
+    private readonly checkboxes: Record<string, string[]> = {},
   ) {}
 
   select<T extends string>(question: string, choices: readonly SelectChoice<T>[]): Promise<T> {
@@ -37,6 +40,18 @@ class FakePrompter implements SetupPrompter {
     const value = this.selected[question];
     if (!value) throw new Error(`No fake selection for ${question}`);
     return Promise.resolve(value as T);
+  }
+
+  checkbox<T extends string>(
+    question: string,
+    choices: readonly CheckboxChoice<T>[],
+  ): Promise<T[]> {
+    this.checkboxCalls.push({ question, choices });
+    const override = this.checkboxes[question];
+    if (override) return Promise.resolve(override as T[]);
+    return Promise.resolve(
+      choices.filter((choice) => choice.checked).map((choice) => choice.value),
+    );
   }
 
   input(question: string, defaultValue?: string): Promise<string> {
@@ -211,6 +226,7 @@ describe('setupAction', () => {
         key: keyPath,
         host: 'workstation',
         sshUser: 'user',
+        tool: ['claude-code', 'codex'],
         allowedDir: [path.join(root, 'projects')],
         skipKeygen: true,
         env,
@@ -247,6 +263,7 @@ describe('setupAction', () => {
     await setupAction(
       {
         role: 'server',
+        tool: ['claude-code', 'codex'],
         allowedDir: [path.join(root, 'projects')],
         env: { XDG_CONFIG_HOME: path.join(root, 'config') },
         home: root,
@@ -283,6 +300,95 @@ describe('setupAction', () => {
     ) as Record<string, unknown>;
     expect(config.tools).toEqual(['codex']);
     expect(config.builtinToolBins).toEqual({ codex: '/opt/codex/bin/codex' });
+  });
+
+  it('interactively offers only the tools present on PATH so setup does not fail', async () => {
+    const env = { XDG_CONFIG_HOME: path.join(root, 'config') };
+    // With no checkbox override, FakePrompter accepts the pre-checked (available) tools,
+    // as a user pressing Enter would.
+    const prompt = new FakePrompter({}, {}, [false]);
+
+    await setupAction(
+      {
+        role: 'server',
+        transport: 'openssh',
+        allowedDir: [root],
+        interactive: true,
+        env,
+        home: root,
+      },
+      io,
+      {
+        prompt,
+        nodePath: '/opt/node/bin/node',
+        cliPath: '/opt/talaria/dist/cli.js',
+        // Pin claude-code so resolveToolBin skips realpath on a nonexistent path.
+        builtinToolBins: { 'claude-code': '/usr/local/bin/claude' },
+        run: (bin, args) => {
+          // Only `claude` resolves on PATH; `codex` and `agent` are missing.
+          if (bin === '/usr/bin/which') {
+            return Promise.resolve(
+              args[0] === 'claude'
+                ? okResult('/usr/local/bin/claude\n')
+                : { ...okResult(), code: 1 },
+            );
+          }
+          return Promise.resolve(okResult());
+        },
+      },
+    );
+
+    const offered = prompt.checkboxCalls[0]?.choices ?? [];
+    expect(offered.map((c) => c.value)).toEqual(['claude-code', 'codex', 'cursor']);
+    expect(offered.find((c) => c.value === 'claude-code')?.checked).toBe(true);
+    expect(offered.find((c) => c.value === 'codex')?.checked).toBe(false);
+    const config = JSON.parse(
+      readFileSync(path.join(root, 'config', 'talaria', 'server.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(config.tools).toEqual(['claude-code']);
+    expect(config.builtinToolBins).toEqual({ 'claude-code': '/usr/local/bin/claude' });
+  });
+
+  it('requires --tool for non-interactive server setup', async () => {
+    await expect(
+      setupAction(
+        {
+          role: 'server',
+          transport: 'openssh',
+          allowedDir: [root],
+          interactive: false,
+          env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+          home: root,
+        },
+        io,
+        { run: () => Promise.resolve(okResult()) },
+      ),
+    ).rejects.toThrow(/Specify which tools to configure with --tool/);
+  });
+
+  it('fails clearly when no server tools are selected', async () => {
+    const prompt = new FakePrompter({}, {}, [], {
+      'Which CLI tools should this server run?': [],
+    });
+    await expect(
+      setupAction(
+        {
+          role: 'server',
+          transport: 'openssh',
+          allowedDir: [root],
+          interactive: true,
+          env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+          home: root,
+        },
+        io,
+        {
+          prompt,
+          nodePath: '/opt/node/bin/node',
+          cliPath: '/opt/talaria/dist/cli.js',
+          run: () => Promise.resolve({ ...okResult(), code: 1 }),
+        },
+      ),
+    ).rejects.toThrow(/No tools selected/);
   });
 
   it('rejects a retained legacy server config that lacks executable pins', async () => {
@@ -487,7 +593,9 @@ describe('setupAction', () => {
   });
 
   it('provisions a dedicated macOS account for an interactive Tailscale server', async () => {
-    const prompt = new FakePrompter({}, {}, [true, true, false]);
+    const prompt = new FakePrompter({}, {}, [true, true, false], {
+      'Which CLI tools should this server run?': ['claude-code', 'codex'],
+    });
     const privileged: Array<{ bin: string; args: string[] }> = [];
     const env = { XDG_CONFIG_HOME: path.join(root, 'config') };
 
@@ -540,7 +648,9 @@ describe('setupAction', () => {
   });
 
   it('recommends and switches to Tailscale transport when Tailscale SSH is enabled', async () => {
-    const prompt = new FakePrompter({}, {}, [true]);
+    const prompt = new FakePrompter({}, {}, [true], {
+      'Which CLI tools should this server run?': ['claude-code', 'codex'],
+    });
 
     await setupAction(
       {
@@ -626,6 +736,7 @@ describe('setupAction', () => {
         {
           role: 'server',
           transport: 'tailscale-ssh',
+          tool: ['claude-code', 'codex'],
           allowedDir: [root],
           interactive: false,
           env: { XDG_CONFIG_HOME: path.join(root, 'config') },
@@ -648,7 +759,9 @@ describe('setupAction', () => {
 
   it('enables macOS Remote Login and installs the prompted controller key', async () => {
     const key = 'ssh-ed25519 AAAAPUB controller';
-    const prompt = new FakePrompter({}, {}, [true, true]);
+    const prompt = new FakePrompter({}, {}, [true, true], {
+      'Which CLI tools should this server run?': ['claude-code', 'codex'],
+    });
     const privileged: Array<{ bin: string; args: string[] }> = [];
 
     await setupAction(
