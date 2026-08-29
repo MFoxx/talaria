@@ -105,7 +105,39 @@ describe('TalariaClient over an in-process server', () => {
       };
     };
     const c = new TalariaClient(failing);
-    await expect(c.ping()).rejects.toMatchObject({ code: 'INTERNAL' });
+    try {
+      await c.ping();
+      expect.unreachable();
+    } catch (err) {
+      if (!isTalariaError(err)) throw err;
+      expect(err.code).toBe('INTERNAL');
+      expect(err.message).toContain('Permission denied (publickey).');
+    }
+  });
+
+  it('surfaces remote stderr when an SSH wrapper exits zero without a response', async () => {
+    const failing: Connector = () => {
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      stdout.end();
+      stderr.end('zsh:1: command not found: talaria');
+      return {
+        stdin: new PassThrough(),
+        stdout,
+        stderr,
+        label: 'tailscale',
+        exit: Promise.resolve({ code: 0, signal: null }),
+      };
+    };
+    const c = new TalariaClient(failing);
+    try {
+      await c.ping();
+      expect.unreachable();
+    } catch (err) {
+      if (!isTalariaError(err)) throw err;
+      expect(err.code).toBe('INTERNAL');
+      expect(err.message).toContain('zsh:1: command not found: talaria');
+    }
   });
 });
 

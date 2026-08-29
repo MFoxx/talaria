@@ -130,8 +130,9 @@ export class Transport {
 
   /**
    * Send one request and stream the response messages. If the connection produces no
-   * messages and exits non-zero, throws a transport error carrying stderr — this is how
-   * an SSH/auth failure surfaces.
+   * messages, throws a transport error carrying its exit status and stderr. Some SSH
+   * wrappers do not propagate a failed remote command's exit status, so stderr must not
+   * be discarded when the local wrapper exits zero.
    */
   async *send(request: Request): AsyncGenerator<Response> {
     const channel = this.connector();
@@ -154,11 +155,11 @@ export class Transport {
     }
 
     const { code } = await channel.exit;
-    if (count === 0 && code !== 0) {
+    if (count === 0) {
       const label = channel.label ?? 'ssh';
       throw new TalariaError(
         'INTERNAL',
-        `Connection failed (${label} exit ${code})${stderr.trim() ? `: ${stderr.trim()}` : ''}`,
+        `Connection produced no protocol response (${label} exit ${code})${stderr.trim() ? `: ${stderr.trim()}` : ''}`,
       );
     }
   }
