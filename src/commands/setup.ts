@@ -32,7 +32,7 @@ import { TalariaClient } from '../client/talaria-client.js';
 import { isTmuxAvailable } from '../server/tmux.js';
 import { BinaryNotFoundError, runCommand } from '../util/exec.js';
 import type { Io } from './actions.js';
-import { ReadlineSetupPrompter, type SelectChoice, type SetupPrompter } from './setup-prompts.js';
+import { InquirerSetupPrompter, type SelectChoice, type SetupPrompter } from './setup-prompts.js';
 
 /** SSH forced command and restrictions applied to the agent key (§6.2). */
 export const FORCED_COMMAND = 'talaria serve';
@@ -334,7 +334,7 @@ export async function setupAction(
       (opts.role === undefined || opts.transport === undefined));
   const ownsPrompt = interactive && dependencies.prompt === undefined;
   const prompt = interactive
-    ? (dependencies.prompt ?? new ReadlineSetupPrompter(process.stdin, process.stderr))
+    ? (dependencies.prompt ?? new InquirerSetupPrompter(process.stdin, process.stderr))
     : undefined;
   const run = dependencies.run ?? runCommand;
   const runInteractive = dependencies.runInteractive ?? defaultInteractiveCommand;
