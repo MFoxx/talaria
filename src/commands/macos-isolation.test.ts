@@ -108,7 +108,7 @@ describe('macOS Tailscale SSH isolation', () => {
   });
 
   it('uses explicit argv for account, group, ACL, install, and account-level checks', async () => {
-    const commands: Array<{ bin: string; args: string[] }> = [];
+    const commands: Array<{ bin: string; args: string[]; cwd?: string }> = [];
     const isolationPlan = plan();
     await provisionMacOsIsolation(isolationPlan, {
       getuid: () => 501,
@@ -118,8 +118,8 @@ describe('macOS Tailscale SSH isolation', () => {
         }
         return Promise.resolve(result(1));
       },
-      runInteractive: (bin, args) => {
-        commands.push({ bin, args });
+      runInteractive: (bin, args, options?: { cwd?: string }) => {
+        commands.push({ bin, args, ...(options?.cwd ? { cwd: options.cwd } : {}) });
         return Promise.resolve(0);
       },
     });
@@ -165,8 +165,12 @@ describe('macOS Tailscale SSH isolation', () => {
     });
     expect(
       commands.some(
-        ({ bin, args }) =>
+        ({ bin, args, cwd }) =>
           bin === '/usr/bin/sudo' &&
+          cwd === '/tmp' &&
+          args.includes('-i') &&
+          args.includes('HOME=/Users/talaria') &&
+          args.includes('TMPDIR=/tmp') &&
           args.includes(
             'PATH=/Users/alice/.local/bin:/opt/homebrew/bin:/usr/bin:/opt/homebrew/lib/node_modules/talaria/dist:/usr/local/bin:/bin:/usr/sbin:/sbin',
           ) &&

@@ -166,7 +166,14 @@ export interface SetupCliOptions {
 }
 
 type CommandRunner = typeof runCommand;
-type InteractiveCommandRunner = (bin: string, args: string[]) => Promise<number | null>;
+interface InteractiveCommandOptions {
+  cwd?: string;
+}
+type InteractiveCommandRunner = (
+  bin: string,
+  args: string[],
+  options?: InteractiveCommandOptions,
+) => Promise<number | null>;
 
 export interface SetupDependencies {
   prompt?: SetupPrompter;
@@ -221,9 +228,16 @@ const TRANSPORT_CHOICES: readonly SelectChoice<TransportKindType>[] = [
   },
 ];
 
-function defaultInteractiveCommand(bin: string, args: string[]): Promise<number | null> {
+function defaultInteractiveCommand(
+  bin: string,
+  args: string[],
+  options?: InteractiveCommandOptions,
+): Promise<number | null> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: 'inherit' });
+    const child = spawn(bin, args, {
+      stdio: 'inherit',
+      ...(options?.cwd ? { cwd: options.cwd } : {}),
+    });
     child.once('error', reject);
     child.once('exit', (code) => resolve(code));
   });

@@ -26,7 +26,14 @@ const TALARIA_DATA_DIR = path.join(TALARIA_HOME, '.local', 'share', 'talaria');
 const TALARIA_SESSION_DIR = path.join(TALARIA_DATA_DIR, 'sessions');
 
 type CommandRunner = typeof runCommand;
-type InteractiveCommandRunner = (bin: string, args: string[]) => Promise<number | null>;
+interface InteractiveCommandOptions {
+  cwd?: string;
+}
+type InteractiveCommandRunner = (
+  bin: string,
+  args: string[],
+  options?: InteractiveCommandOptions,
+) => Promise<number | null>;
 
 export interface MacOsIsolationOptions {
   controllerUser: string;
@@ -181,6 +188,10 @@ export HOME=${quoteForSh(plan.home)}
 export XDG_CONFIG_HOME=${quoteForSh(path.join(plan.home, '.config'))}
 export XDG_DATA_HOME=${quoteForSh(path.join(plan.home, '.local', 'share'))}
 export PATH=${quoteForSh(plan.path)}
+export TMPDIR='/tmp'
+export USER=${quoteForSh(plan.account)}
+export LOGNAME=${quoteForSh(plan.account)}
+cd "$HOME"
 exec ${quoteForSh(plan.nodePath)} ${quoteForSh(plan.cliPath)} serve
 `;
 }
@@ -190,8 +201,9 @@ async function checked(
   bin: string,
   args: string[],
   description: string,
+  options?: InteractiveCommandOptions,
 ): Promise<void> {
-  const code = await runInteractive(bin, args);
+  const code = await runInteractive(bin, args, options);
   if (code !== 0) throw new Error(`${description} failed (exit ${String(code)})`);
 }
 
@@ -472,13 +484,30 @@ async function verifyRuntimeAccess(
     '/usr/bin/sudo',
     ['-u', plan.account, plan.nodePath, '--version'],
     'Launching the Node runtime',
+    { cwd: '/tmp' },
   );
   for (const tool of ['claude', 'codex']) {
     await checked(
       deps.runInteractive,
       '/usr/bin/sudo',
-      ['-u', plan.account, '-H', '/usr/bin/env', `PATH=${plan.path}`, tool, '--version'],
+      [
+        '-u',
+        plan.account,
+        '-H',
+        '/usr/bin/env',
+        '-i',
+        `HOME=${plan.home}`,
+        `USER=${plan.account}`,
+        `LOGNAME=${plan.account}`,
+        `XDG_CONFIG_HOME=${path.join(plan.home, '.config')}`,
+        `XDG_DATA_HOME=${path.join(plan.home, '.local', 'share')}`,
+        'TMPDIR=/tmp',
+        `PATH=${plan.path}`,
+        tool,
+        '--version',
+      ],
       `Verifying ${tool} access`,
+      { cwd: '/tmp' },
     );
   }
 }
