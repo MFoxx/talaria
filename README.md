@@ -50,7 +50,7 @@ The flags below remain available for non-interactive or repeatable setup.
 On the workstation:
 
 ```sh
-talaria setup --role server --transport openssh --allowed-dir ~/projects
+talaria setup --role server --transport openssh --tool codex --allowed-dir ~/projects
 ```
 
 On the controller:
@@ -67,22 +67,25 @@ dedicated key is restricted to `talaria serve`—no shell, port/agent/X11 forwar
 PTY:
 
 If Tailscale SSH is already enabled on the server, it intercepts tailnet port 22 and
-bypasses OpenSSH `authorized_keys`, including Talaria's forced command. The interactive
-wizard detects this conflict and recommends switching the setup to `tailscale-ssh`; it
+bypasses OpenSSH `authorized_keys`, including Talaria's forced command. Setup detects
+this conflict in both interactive and flag-driven runs; the wizard recommends switching
+to `tailscale-ssh`, while a non-interactive run stops with instructions. It
 does not disable an intentionally enabled Tailscale SSH service. To deliberately use
 OpenSSH instead, disable Tailscale SSH first with `tailscale set --ssh=false`.
 
 ```
-command="PATH='/Users/me/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/absolute/node/bin:/absolute/talaria/dist' '/absolute/node/bin/node' '/absolute/talaria/dist/cli.js' serve",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... talaria-agent
+command="PATH='/absolute/claude/bin:/absolute/codex/bin:/absolute/node/bin:/absolute/talaria/dist:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' '/absolute/node/bin/node' '/absolute/talaria/dist/cli.js' serve",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... talaria-agent
 ```
 
 #### Running OpenSSH mode from a clone
 
-SSH forced commands do not load shell startup files. Server setup therefore captures the
-current executable `PATH` (including the directories used to find `claude`, `codex`, and
-other tools) and writes absolute paths for both Node and Talaria's CLI entry file. Existing
-legacy entries containing only `command="talaria serve"` are upgraded when the same key is
-authorized again.
+SSH forced commands do not load shell startup files. Server setup therefore resolves Node,
+Talaria, and each configured built-in tool to an absolute executable. Those tool paths are
+persisted in `builtinToolBins`; adapters use them directly at runtime. The forced command
+uses a service-only `PATH` assembled from those pinned locations and standard system
+directories—never a relative or inherited controller `PATH`. Existing legacy entries
+containing only `command="talaria serve"` are upgraded when the same key is authorized
+again.
 
 For a clone, build and link Talaria before running server setup so the wizard can resolve
 the compiled CLI:
@@ -95,6 +98,10 @@ talaria setup
 
 Running server setup directly through `tsx src/cli.ts` is rejected because plain Node
 cannot execute that TypeScript source when sshd later invokes the forced command.
+Use `--tool codex` or `--tool claude-code` to enable only that built-in; repeat the flag
+to enable both. When omitted, setup enables and pins both tools.
+Server configs created before executable pinning must be regenerated with
+`talaria setup --role server --force`.
 
 ### Option B: Tailscale SSH
 
@@ -102,7 +109,7 @@ Install compatible Tailscale versions on both machines. On the workstation, conf
 the Talaria server and enable Tailscale's SSH server:
 
 ```sh
-talaria setup --role server --transport tailscale-ssh --allowed-dir ~/projects
+talaria setup --role server --transport tailscale-ssh --tool codex --allowed-dir ~/projects
 tailscale set --ssh=true
 ```
 
@@ -140,7 +147,7 @@ access, it displays the complete change plan. The provisioner then:
   directories when needed to reach a selected project path;
 - writes `/Users/talaria/.config/talaria/server.json` and private session state owned by
   the service account; and
-- verifies Node, the Talaria CLI, `claude`, and `codex` as the service account.
+- verifies Node, the Talaria CLI, and exactly the enabled tool CLIs as the service account.
 
 The wrapper has a self-contained `PATH` and absolute paths for Node and Talaria. When
 Node or the Talaria package is installed below the main user's private home, setup copies

@@ -11,6 +11,12 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync 
 import os from 'node:os';
 import path from 'node:path';
 import { runCommand } from '../util/exec.js';
+import { quoteShellWord } from '../util/shell.js';
+import {
+  buildServiceExecutablePath,
+  type BuiltinToolBins,
+  type BuiltinToolName,
+} from './setup-runtime.js';
 
 export const TALARIA_ACCOUNT = 'talaria';
 export const TALARIA_PROJECT_GROUP = 'talaria-projects';
@@ -54,7 +60,7 @@ export interface MacOsIsolationOptions {
   serverConfig: Record<string, unknown>;
   nodePath: string;
   cliPath: string;
-  executablePath: string;
+  builtinToolBins: BuiltinToolBins;
 }
 
 export interface MacOsIsolationPlan extends MacOsIsolationOptions {
@@ -70,7 +76,7 @@ export interface MacOsIsolationPlan extends MacOsIsolationOptions {
   configPath: typeof TALARIA_CONFIG_FILE;
   stateDir: typeof TALARIA_DATA_DIR;
   traverseDirs: string[];
-  path: string;
+  serviceExecutablePath: string;
   summary: string[];
 }
 
@@ -78,10 +84,6 @@ export interface MacOsIsolationDependencies {
   run?: CommandRunner;
   runInteractive: InteractiveCommandRunner;
   getuid: () => number;
-}
-
-function quoteForSh(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function requireAbsoluteFile(label: string, filePath: string): string {
@@ -143,21 +145,11 @@ export function createMacOsIsolationPlan(options: MacOsIsolationOptions): MacOsI
     : sourceCliPath;
   const allowedDirs = normalizeAllowedDirs(options.allowedDirs);
   const traverseDirs = requiredTraverseDirs(allowedDirs);
-  const pathEntries = [
-    ...options.executablePath.split(path.delimiter),
-    path.dirname(nodePath),
-    path.dirname(cliPath),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin',
-  ].filter(
-    (entry, index, entries) =>
-      path.isAbsolute(entry) && entry.length > 1 && entries.indexOf(entry) === index,
+  const serviceExecutablePath = buildServiceExecutablePath(
+    nodePath,
+    cliPath,
+    options.builtinToolBins,
   );
-  const executablePath = pathEntries.join(path.delimiter);
 
   return {
     ...options,
@@ -169,7 +161,6 @@ export function createMacOsIsolationPlan(options: MacOsIsolationOptions): MacOsI
     nodePath,
     cliPath,
     allowedDirs,
-    executablePath,
     account: TALARIA_ACCOUNT,
     group: TALARIA_PROJECT_GROUP,
     home: TALARIA_HOME,
@@ -177,7 +168,7 @@ export function createMacOsIsolationPlan(options: MacOsIsolationOptions): MacOsI
     configPath: TALARIA_CONFIG_FILE,
     stateDir: TALARIA_DATA_DIR,
     traverseDirs,
-    path: executablePath,
+    serviceExecutablePath,
     summary: [
       `Create or verify the hidden, non-admin ${TALARIA_ACCOUNT} account with password login disabled`,
       `Install a root-owned shell that accepts only \`talaria serve\` at ${TALARIA_SHELL}`,
@@ -208,15 +199,15 @@ if [ "$#" -ne 2 ] || [ "$1" != "-c" ] || [ "$2" != "talaria serve" ]; then
   exit 126
 fi
 
-export HOME=${quoteForSh(plan.home)}
-export XDG_CONFIG_HOME=${quoteForSh(path.join(plan.home, '.config'))}
-export XDG_DATA_HOME=${quoteForSh(path.join(plan.home, '.local', 'share'))}
-export PATH=${quoteForSh(plan.path)}
+export HOME=${quoteShellWord(plan.home)}
+export XDG_CONFIG_HOME=${quoteShellWord(path.join(plan.home, '.config'))}
+export XDG_DATA_HOME=${quoteShellWord(path.join(plan.home, '.local', 'share'))}
+export PATH=${quoteShellWord(plan.serviceExecutablePath)}
 export TMPDIR='/tmp'
-export USER=${quoteForSh(plan.account)}
-export LOGNAME=${quoteForSh(plan.account)}
+export USER=${quoteShellWord(plan.account)}
+export LOGNAME=${quoteShellWord(plan.account)}
 cd "$HOME"
-exec ${quoteForSh(plan.nodePath)} ${quoteForSh(plan.cliPath)} serve
+exec ${quoteShellWord(plan.nodePath)} ${quoteShellWord(plan.cliPath)} serve
 `;
 }
 
@@ -537,7 +528,15 @@ async function verifyRuntimeAccess(
     'Launching the Node runtime',
     { cwd: '/tmp' },
   );
-  for (const tool of ['claude', 'codex']) {
+  const configuredNames = new Set(
+    Array.isArray(plan.serverConfig.tools)
+      ? plan.serverConfig.tools.filter((name): name is string => typeof name === 'string')
+      : [],
+  );
+  const configuredBuiltins = Object.entries(plan.builtinToolBins).filter(
+    (entry): entry is [BuiltinToolName, string] => configuredNames.has(entry[0]),
+  );
+  for (const [name, tool] of configuredBuiltins) {
     await checked(
       deps.runInteractive,
       '/usr/bin/sudo',
@@ -553,11 +552,11 @@ async function verifyRuntimeAccess(
         `XDG_CONFIG_HOME=${path.join(plan.home, '.config')}`,
         `XDG_DATA_HOME=${path.join(plan.home, '.local', 'share')}`,
         'TMPDIR=/tmp',
-        `PATH=${plan.path}`,
+        `PATH=${plan.serviceExecutablePath}`,
         tool,
         '--version',
       ],
-      `Verifying ${tool} access`,
+      `Verifying ${name} access`,
       { cwd: '/tmp' },
     );
   }

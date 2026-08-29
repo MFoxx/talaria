@@ -55,12 +55,22 @@ describe('buildAuthorizedKeysLine', () => {
     const command = buildTalariaForcedCommand({
       nodePath: '/opt/node/bin/node',
       cliPath: '/opt/talaria/dist/cli.js',
-      executablePath: '/home/me/.local/bin:/usr/bin',
+      serviceExecutablePath: '/opt/tools/claude:/opt/tools/codex:/usr/bin',
     });
     const line = buildAuthorizedKeysLine('ssh-ed25519 AAAAKEY talaria-agent\n', command);
     expect(line).toBe(
-      "command=\"PATH='/home/me/.local/bin:/usr/bin:/opt/node/bin:/opt/talaria/dist' '/opt/node/bin/node' '/opt/talaria/dist/cli.js' serve\",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAAKEY talaria-agent",
+      "command=\"PATH='/opt/tools/claude:/opt/tools/codex:/usr/bin' '/opt/node/bin/node' '/opt/talaria/dist/cli.js' serve\",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAAKEY talaria-agent",
     );
+  });
+
+  it('rejects relative entries in the forced-command service PATH', () => {
+    expect(() =>
+      buildTalariaForcedCommand({
+        nodePath: '/opt/node/bin/node',
+        cliPath: '/opt/talaria/dist/cli.js',
+        serviceExecutablePath: './bin:/usr/bin',
+      }),
+    ).toThrow(/only absolute directories/);
   });
 });
 
@@ -104,7 +114,7 @@ describe('installAuthorizedKey', () => {
       const command = buildTalariaForcedCommand({
         nodePath: '/opt/node/bin/node',
         cliPath: '/opt/talaria/dist/cli.js',
-        executablePath: '/tools/bin:/usr/bin',
+        serviceExecutablePath: '/tools/bin:/usr/bin',
       });
       expect(installAuthorizedKey(key, home, command)).toBe('updated');
       expect(readFileSync(path.join(home, '.ssh', 'authorized_keys'), 'utf8')).toBe(
@@ -118,7 +128,13 @@ describe('installAuthorizedKey', () => {
 
 describe('config builders produce valid configs', () => {
   it('server config parses', () => {
-    const cfg = buildServerConfig({ allowedDirs: ['/home/me/projects'] });
+    const cfg = buildServerConfig({
+      allowedDirs: ['/home/me/projects'],
+      builtinToolBins: {
+        'claude-code': '/usr/local/bin/claude',
+        codex: '/usr/local/bin/codex',
+      },
+    });
     expect(() => parseServerConfig(cfg)).not.toThrow();
     expect(cfg.tools).toEqual(['claude-code', 'codex']);
   });
@@ -242,6 +258,61 @@ describe('setupAction', () => {
     expect(err.join('\n')).not.toContain('authorized_keys');
   });
 
+  it('configures and pins only the selected built-in server tool', async () => {
+    const env = { XDG_CONFIG_HOME: path.join(root, 'config') };
+    await setupAction(
+      {
+        role: 'server',
+        transport: 'openssh',
+        tool: ['codex'],
+        allowedDir: [root],
+        interactive: false,
+        env,
+        home: root,
+      },
+      io,
+      {
+        nodePath: '/opt/node/bin/node',
+        cliPath: '/opt/talaria/dist/cli.js',
+        builtinToolBins: { codex: '/opt/codex/bin/codex' },
+        run: () => Promise.resolve({ ...okResult(), code: 1 }),
+      },
+    );
+    const config = JSON.parse(
+      readFileSync(path.join(root, 'config', 'talaria', 'server.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(config.tools).toEqual(['codex']);
+    expect(config.builtinToolBins).toEqual({ codex: '/opt/codex/bin/codex' });
+  });
+
+  it('rejects a retained legacy server config that lacks executable pins', async () => {
+    const env = { XDG_CONFIG_HOME: path.join(root, 'config') };
+    const options = {
+      role: 'server' as const,
+      transport: 'openssh' as const,
+      tool: ['codex'],
+      allowedDir: [root],
+      interactive: false,
+      env,
+      home: root,
+    };
+    const dependencies = {
+      nodePath: '/opt/node/bin/node',
+      cliPath: '/opt/talaria/dist/cli.js',
+      builtinToolBins: { codex: '/opt/codex/bin/codex' },
+      run: () => Promise.resolve({ ...okResult(), code: 1 }),
+    };
+    await setupAction(options, io, dependencies);
+    writeFileSync(
+      path.join(root, 'config', 'talaria', 'server.json'),
+      JSON.stringify({ tools: ['codex'], allowedDirs: [root] }),
+    );
+
+    await expect(setupAction(options, io, dependencies)).rejects.toThrow(
+      /rerun setup with --force/,
+    );
+  });
+
   it('configures Tailscale SSH without generating or printing a key', async () => {
     const env = { XDG_CONFIG_HOME: path.join(root, 'config') };
     const keyPath = path.join(root, '.ssh', 'talaria_agent_ed25519');
@@ -265,6 +336,28 @@ describe('setupAction', () => {
     expect(out).toEqual([]);
     expect(err.join('\n')).toContain('no SSH key was generated');
     expect(err.join('\n')).toContain('tailnet policy');
+  });
+
+  it('defaults a client-only Tailscale config to the current user', async () => {
+    const env = { XDG_CONFIG_HOME: path.join(root, 'config') };
+    await setupAction(
+      {
+        role: 'client',
+        transport: 'tailscale-ssh',
+        host: 'workstation',
+        env,
+        home: root,
+      },
+      io,
+      {
+        username: 'alice',
+        run: () => Promise.resolve(okResult()),
+      },
+    );
+    const client = parseClientConfig(
+      JSON.parse(readFileSync(path.join(root, 'config', 'talaria', 'client.json'), 'utf8')),
+    );
+    expect(client.hosts.desktop?.sshUser).toBe('alice');
   });
 
   it('rejects an SSH key option for Tailscale SSH', async () => {
@@ -370,6 +463,29 @@ describe('setupAction', () => {
     ).rejects.toThrow(/tailscaled is required/);
   });
 
+  it('checks for tailscaled during flag-driven Tailscale server setup', async () => {
+    await expect(
+      setupAction(
+        {
+          role: 'server',
+          transport: 'tailscale-ssh',
+          allowedDir: [root],
+          interactive: false,
+          env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+          home: root,
+        },
+        io,
+        {
+          platform: 'linux',
+          run: (bin) => {
+            if (bin === 'tailscaled') return Promise.reject(new BinaryNotFoundError(bin));
+            return Promise.resolve(okResult());
+          },
+        },
+      ),
+    ).rejects.toThrow(/tailscaled is required/);
+  });
+
   it('provisions a dedicated macOS account for an interactive Tailscale server', async () => {
     const prompt = new FakePrompter({}, {}, [true, true, false]);
     const privileged: Array<{ bin: string; args: string[] }> = [];
@@ -391,7 +507,10 @@ describe('setupAction', () => {
         username: 'alice',
         nodePath: '/opt/homebrew/bin/node',
         cliPath: '/opt/homebrew/lib/node_modules/talaria/dist/cli.js',
-        executablePath: '/opt/homebrew/bin:/usr/bin',
+        builtinToolBins: {
+          'claude-code': '/opt/homebrew/bin/claude',
+          codex: '/opt/homebrew/bin/codex',
+        },
         run: (bin, args) => {
           if (bin === '/usr/bin/dscl' && args.includes('-list')) {
             return Promise.resolve(okResult('alice 501\n'));
@@ -435,6 +554,10 @@ describe('setupAction', () => {
       io,
       {
         prompt,
+        builtinToolBins: {
+          'claude-code': '/opt/homebrew/bin/claude',
+          codex: '/opt/homebrew/bin/codex',
+        },
         run: (bin, args) =>
           Promise.resolve(
             bin === 'tailscale' && args[0] === 'debug'
@@ -473,6 +596,56 @@ describe('setupAction', () => {
     expect(err.join('\n')).toContain('use that transport instead');
   });
 
+  it('checks the Tailscale SSH conflict during flag-driven OpenSSH setup', async () => {
+    await expect(
+      setupAction(
+        {
+          role: 'server',
+          transport: 'openssh',
+          allowedDir: [root],
+          interactive: false,
+          env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+          home: root,
+        },
+        io,
+        {
+          run: (bin, args) =>
+            Promise.resolve(
+              bin === 'tailscale' && args[0] === 'debug'
+                ? okResult(JSON.stringify({ RunSSH: true }))
+                : okResult(),
+            ),
+        },
+      ),
+    ).rejects.toThrow(/Use `--transport tailscale-ssh`/);
+  });
+
+  it('requires approval for a flag-driven macOS Tailscale server setup', async () => {
+    await expect(
+      setupAction(
+        {
+          role: 'server',
+          transport: 'tailscale-ssh',
+          allowedDir: [root],
+          interactive: false,
+          env: { XDG_CONFIG_HOME: path.join(root, 'config') },
+          home: root,
+        },
+        io,
+        {
+          platform: 'darwin',
+          nodePath: '/opt/homebrew/bin/node',
+          cliPath: '/opt/talaria/dist/cli.js',
+          builtinToolBins: {
+            'claude-code': '/opt/homebrew/bin/claude',
+            codex: '/opt/homebrew/bin/codex',
+          },
+          run: () => Promise.resolve(okResult()),
+        },
+      ),
+    ).rejects.toThrow(/requires an interactive run/);
+  });
+
   it('enables macOS Remote Login and installs the prompted controller key', async () => {
     const key = 'ssh-ed25519 AAAAPUB controller';
     const prompt = new FakePrompter({}, {}, [true, true]);
@@ -494,7 +667,10 @@ describe('setupAction', () => {
         platform: 'darwin',
         nodePath: '/opt/node/bin/node',
         cliPath: '/opt/talaria/dist/cli.js',
-        executablePath: '/tools/claude/bin:/tools/codex/bin:/usr/bin',
+        builtinToolBins: {
+          'claude-code': '/tools/claude/bin/claude',
+          codex: '/tools/codex/bin/codex',
+        },
         run: () => Promise.resolve(okResult()),
         runInteractive: (bin, args) => {
           privileged.push({ bin, args });
@@ -512,7 +688,8 @@ describe('setupAction', () => {
         buildTalariaForcedCommand({
           nodePath: '/opt/node/bin/node',
           cliPath: '/opt/talaria/dist/cli.js',
-          executablePath: '/tools/claude/bin:/tools/codex/bin:/usr/bin',
+          serviceExecutablePath:
+            '/tools/claude/bin:/tools/codex/bin:/opt/node/bin:/opt/talaria/dist:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
         }),
       ) + '\n',
     );

@@ -25,14 +25,17 @@ describe('macOS Tailscale SSH isolation', () => {
 
   afterEach(() => rmSync(project, { recursive: true, force: true }));
 
-  function plan() {
+  function plan(tools = ['claude-code', 'codex']) {
     return createMacOsIsolationPlan({
       controllerUser: 'alice',
       allowedDirs: [project],
-      serverConfig: { tools: ['claude-code', 'codex'], allowedDirs: [project] },
+      serverConfig: { tools, allowedDirs: [project] },
       nodePath: '/opt/homebrew/bin/node',
       cliPath: '/opt/homebrew/lib/node_modules/talaria/dist/cli.js',
-      executablePath: '/Users/alice/.local/bin:/opt/homebrew/bin:/usr/bin',
+      builtinToolBins: {
+        'claude-code': '/opt/homebrew/bin/claude',
+        codex: '/opt/homebrew/bin/codex',
+      },
     });
   }
 
@@ -44,7 +47,7 @@ describe('macOS Tailscale SSH isolation', () => {
     expect(shell).toContain("export HOME='/Users/talaria'");
     expect(shell).toContain("'/opt/homebrew/bin/node'");
     expect(shell).toContain("'/opt/homebrew/lib/node_modules/talaria/dist/cli.js' serve");
-    expect(shell).toContain('/Users/alice/.local/bin');
+    expect(shell).not.toContain('/Users/alice/.local/bin');
   });
 
   it('stages Node outside a private user home before using it in the service shell', async () => {
@@ -54,7 +57,7 @@ describe('macOS Tailscale SSH isolation', () => {
       serverConfig: { tools: [], allowedDirs: [project] },
       nodePath: '/Users/alice/.nvm/versions/node/v22/bin/node',
       cliPath: '/Users/alice/src/talaria/dist/cli.js',
-      executablePath: '/Users/alice/.nvm/versions/node/v22/bin:/usr/bin',
+      builtinToolBins: {},
     });
 
     expect(isolationPlan.sourceNodePath).toBe('/Users/alice/.nvm/versions/node/v22/bin/node');
@@ -186,9 +189,9 @@ describe('macOS Tailscale SSH isolation', () => {
           args.includes('HOME=/Users/talaria') &&
           args.includes('TMPDIR=/tmp') &&
           args.includes(
-            'PATH=/Users/alice/.local/bin:/opt/homebrew/bin:/usr/bin:/opt/homebrew/lib/node_modules/talaria/dist:/usr/local/bin:/bin:/usr/sbin:/sbin',
+            'PATH=/opt/homebrew/bin:/opt/homebrew/lib/node_modules/talaria/dist:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
           ) &&
-          args.includes('codex'),
+          args.some((arg) => arg.endsWith('/codex')),
       ),
     ).toBe(true);
     expect(commands.every(({ args }) => !args.slice(1).includes('/usr/bin/sudo'))).toBe(true);
@@ -205,6 +208,23 @@ describe('macOS Tailscale SSH isolation', () => {
           ),
       }),
     ).rejects.toThrow(/is an administrator/);
+  });
+
+  it('verifies only built-in tools enabled in server config', async () => {
+    const commands: string[][] = [];
+    await provisionMacOsIsolation(plan(['codex']), {
+      getuid: () => 501,
+      run: (bin, args) =>
+        Promise.resolve(
+          bin === '/usr/bin/dscl' && args.includes('-list') ? result(0, 'alice 501\n') : result(1),
+        ),
+      runInteractive: (_bin, args) => {
+        commands.push(args);
+        return Promise.resolve(0);
+      },
+    });
+    expect(commands.some((args) => args.some((arg) => arg.endsWith('/codex')))).toBe(true);
+    expect(commands.some((args) => args.some((arg) => arg.endsWith('/claude')))).toBe(false);
   });
 
   it('repairs a service account that was disabled at the macOS login layer', async () => {
