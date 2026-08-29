@@ -29,7 +29,7 @@ Install on **both** machines: the agent server (VPS) and the workstation (target
 Talaria supports two SSH transports. `openssh` is the default and preserves the
 strongest command-level isolation. `tailscale-ssh` removes key distribution and host-key
 management, with the security tradeoff described below. Install Talaria, tmux, and the
-enabled tools (`claude`, `codex`, and so on) on the workstation in both modes.
+enabled tools (`claude`, `codex`, `agent`, and so on) on the workstation in both modes.
 
 ### Option A: OpenSSH over Tailscale
 
@@ -66,7 +66,7 @@ On the workstation, find the relevant paths:
 
 ```sh
 command -v node
-command -v claude # and/or: command -v codex
+command -v claude # and/or: command -v codex, command -v agent
 ```
 
 Then replace the `command="..."` portion of the `authorized_keys` entry with a command
@@ -77,7 +77,7 @@ command="PATH=/Users/me/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bi
 ```
 
 `PATH` entries are directories, not executable paths. Include the parent directory of
-every enabled tool (`claude`, `codex`, and so on) and use the exact absolute Node path
+every enabled tool (`claude`, `codex`, `agent`, and so on) and use the exact absolute Node path
 from `command -v node`.
 
 ### Option B: Tailscale SSH

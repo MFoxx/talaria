@@ -8,7 +8,7 @@ Working `0.1.0` (M1–M4 complete). Layout:
 
 - `src/protocol/` — wire messages, errors, JSONL/output-log framing (zod schemas shared by both ends)
 - `src/config/` — server/client config + XDG paths
-- `src/adapters/` — tool adapters (claude-code, codex, generic) + registry
+- `src/adapters/` — tool adapters (claude-code, codex, cursor, generic) + registry
 - `src/server/` — `serve` loop, runner, session store, tmux/direct process managers, dir validation
 - `src/client/` — SSH transport, `TalariaClient`, offset cache
 - `src/commands/` + `src/cli.ts` — commander CLI (run/attach/sessions/kill/tools/ping/config/setup/serve)
