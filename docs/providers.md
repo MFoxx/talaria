@@ -107,6 +107,30 @@ Supported arguments:
 - `outputFormat` — `plain`, `json`, or `streaming-json` (default).
 - `alwaysApprove` — auto-approves tool executions; use with caution.
 
+## OpenCode
+
+Tool name: `opencode`
+
+Executable: `opencode`
+
+Talaria runs OpenCode in non-interactive mode with JSON event output. Native OpenCode sessions can be continued with `talaria continue`.
+
+```sh
+talaria run -H desktop -t opencode -d /projects/app \
+  -p "Fix the failing authentication test" \
+  --arg model=anthropic/claude-sonnet-4-6 --arg agent=build
+```
+
+Supported arguments:
+
+- `model` — model in `provider/model` form.
+- `agent` — agent to use.
+- `variant` — provider-specific model variant.
+- `thinking` — includes thinking blocks when `true`.
+- `auto` — auto-approves permissions not explicitly denied; use with caution.
+
+Install and authenticate the OpenCode CLI with `opencode auth login`, then select `opencode` during setup or enable it later with `talaria server add-tool opencode`.
+
 ## Pi Code (beta)
 
 Tool name: `pi`  
