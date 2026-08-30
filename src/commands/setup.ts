@@ -258,7 +258,7 @@ const ROLE_CHOICES: readonly SelectChoice<'client' | 'server'>[] = [
 const TOOL_LABELS: Record<BuiltinToolName, { label: string; description: string }> = {
   'claude-code': { label: 'Claude Code', description: "Anthropic's Claude Code CLI (`claude`)." },
   codex: { label: 'Codex', description: "OpenAI's Codex CLI (`codex`)." },
-  cursor: { label: 'Cursor', description: "Cursor's agent CLI (`agent`)." },
+  cursor: { label: 'Cursor', description: "Cursor's agent CLI (`cursor-agent`)." },
   grok: { label: 'Grok Build', description: "xAI's Grok coding CLI (`grok`)." },
 };
 
@@ -288,7 +288,7 @@ async function selectServerTools(
   const selected = await prompt.checkbox('Which CLI tools should this server run?', choices);
   if (selected.length === 0) {
     throw new Error(
-      'No tools selected. Install at least one supported CLI (claude, codex, agent, or grok) and rerun setup.',
+      'No tools selected. Install at least one supported CLI (claude, codex, cursor-agent, or grok) and rerun setup.',
     );
   }
   const missing = selected.filter(

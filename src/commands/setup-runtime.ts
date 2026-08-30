@@ -7,11 +7,11 @@ import { runCommand } from '../util/exec.js';
 export type BuiltinToolName = 'claude-code' | 'codex' | 'cursor' | 'grok';
 export type BuiltinToolBins = Partial<Record<BuiltinToolName, string>>;
 
-const TOOL_COMMANDS: Record<BuiltinToolName, string> = {
-  'claude-code': 'claude',
-  codex: 'codex',
-  cursor: 'agent',
-  grok: 'grok',
+const TOOL_COMMANDS: Record<BuiltinToolName, readonly string[]> = {
+  'claude-code': ['claude'],
+  codex: ['codex'],
+  cursor: ['cursor-agent', 'agent'],
+  grok: ['grok'],
 };
 
 /** Every built-in tool Talaria can pin, in the order shown during setup. */
@@ -19,7 +19,33 @@ export const BUILTIN_TOOL_NAMES = Object.keys(TOOL_COMMANDS) as BuiltinToolName[
 
 /** The executable a built-in tool is invoked through (used for PATH detection). */
 export function builtinToolCommand(name: BuiltinToolName): string {
-  return TOOL_COMMANDS[name];
+  return TOOL_COMMANDS[name][0]!;
+}
+
+async function findToolLauncher(
+  name: BuiltinToolName,
+  run: CommandRunner,
+): Promise<string | undefined> {
+  for (const command of TOOL_COMMANDS[name]) {
+    const result = await run('/usr/bin/which', [command]);
+    const found = result.stdout.trim().split(/\r?\n/, 1)[0];
+    if (result.code !== 0 || !found) continue;
+    const absolute = requireAbsolute(`${name} binary`, found);
+    if (name === 'cursor') {
+      const identity = await run(absolute, ['--version']);
+      const output = `${identity.stdout}\n${identity.stderr}`.trim();
+      if (identity.code !== 0) {
+        throw new Error(`Could not verify that ${absolute} is the Cursor CLI`);
+      }
+      if (/\bgrok\b/i.test(output) && !/\bcursor\b/i.test(output)) {
+        throw new Error(
+          `${command} resolves to Grok Build, not Cursor; install Cursor's cursor-agent command`,
+        );
+      }
+    }
+    return absolute;
+  }
+  return undefined;
 }
 
 /** Whether a built-in tool's executable resolves on PATH right now. */
@@ -28,8 +54,7 @@ export async function isBuiltinToolAvailable(
   run: CommandRunner,
 ): Promise<boolean> {
   try {
-    const result = await run('/usr/bin/which', [TOOL_COMMANDS[name]]);
-    return result.code === 0 && result.stdout.trim().length > 0;
+    return (await findToolLauncher(name, run)) !== undefined;
   } catch {
     return false;
   }
@@ -86,13 +111,13 @@ async function resolveToolBin(
   run: CommandRunner,
 ): Promise<string> {
   if (override) return requireAbsolute(`${name} binary`, override);
-  const command = TOOL_COMMANDS[name];
-  const result = await run('/usr/bin/which', [command]);
-  const found = result.stdout.trim().split(/\r?\n/, 1)[0];
-  if (result.code !== 0 || !found) {
-    throw new Error(`${name} is configured but ${command} was not found in PATH`);
+  const found = await findToolLauncher(name, run);
+  if (!found) {
+    throw new Error(
+      `${name} is configured but ${TOOL_COMMANDS[name].join(' or ')} was not found in PATH`,
+    );
   }
-  return realpathSync(requireAbsolute(`${name} binary`, found));
+  return realpathSync(found);
 }
 
 /**
@@ -127,6 +152,14 @@ export async function resolveSetupRuntime(
     }),
   );
   const builtinToolBins = Object.fromEntries(entries) as BuiltinToolBins;
+  const ownersByBin = new Map<string, BuiltinToolName>();
+  for (const [name, bin] of entries) {
+    const existing = ownersByBin.get(bin);
+    if (existing) {
+      throw new Error(`${existing} and ${name} resolve to the same executable: ${bin}`);
+    }
+    ownersByBin.set(bin, name);
+  }
   return {
     nodePath,
     cliPath,

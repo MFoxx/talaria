@@ -23,6 +23,8 @@ export interface AddServerToolCliOptions {
   home?: string;
 }
 
+export type RemoveServerToolCliOptions = AddServerToolCliOptions;
+
 type CommandRunner = typeof runCommand;
 
 export interface AddServerToolDependencies {
@@ -31,6 +33,8 @@ export interface AddServerToolDependencies {
   nodePath?: string;
   cliPath?: string;
 }
+
+export type RemoveServerToolDependencies = AddServerToolDependencies;
 
 const defaultIo: Io = {
   write: (text) => process.stdout.write(text),
@@ -159,5 +163,51 @@ export async function addServerToolAction(
     );
   } else {
     io.errLine('  • no restricted OpenSSH key entries found; server config updated');
+  }
+}
+
+/** Disable one built-in tool and remove its executable pin without rerunning setup. */
+export async function removeServerToolAction(
+  opts: RemoveServerToolCliOptions,
+  io: Io = defaultIo,
+  dependencies: RemoveServerToolDependencies = {},
+): Promise<void> {
+  if (!BUILTIN_TOOL_NAMES.includes(opts.tool as BuiltinToolName)) {
+    throw new Error(
+      `Unsupported server tool ${opts.tool}; expected ${BUILTIN_TOOL_NAMES.join(', ')}`,
+    );
+  }
+  const tool = opts.tool as BuiltinToolName;
+  const env = opts.env ?? process.env;
+  const home = opts.home ?? os.homedir();
+  const configFile = serverConfigPath(env);
+  const rawConfig = parseConfigObject(configFile);
+  const config = parseServerConfig(rawConfig, { env, home });
+  const tools = config.tools.filter((name) => name !== tool);
+  const builtinToolBins = { ...config.builtinToolBins };
+  delete builtinToolBins[tool];
+  const runtime = await resolveSetupRuntime({
+    tools,
+    run: dependencies.run ?? runCommand,
+    ...(dependencies.nodePath ? { nodePath: dependencies.nodePath } : {}),
+    ...(dependencies.cliPath ? { cliPath: dependencies.cliPath } : {}),
+    builtinToolBins,
+  });
+  const updatedRaw = {
+    ...rawConfig,
+    tools,
+    builtinToolBins,
+  };
+  parseServerConfig(updatedRaw, { env, home });
+
+  const forcedCommand = buildTalariaForcedCommand(runtime);
+  const refreshedKeys = refreshAuthorizedKeysCommands(home, forcedCommand);
+  writeFileSync(configFile, JSON.stringify(updatedRaw, null, 2) + '\n');
+
+  io.errLine(`  ✓ disabled ${tool} and removed its executable pin`);
+  if (refreshedKeys > 0) {
+    io.errLine(
+      `  ✓ refreshed PATH in ${refreshedKeys} restricted OpenSSH key entr${refreshedKeys === 1 ? 'y' : 'ies'}`,
+    );
   }
 }

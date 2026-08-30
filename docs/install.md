@@ -68,6 +68,8 @@ talaria server add-tool grok
 
 The command resolves and pins the executable, adds the tool to the server allowlist, and refreshes the PATH in Talaria's restricted OpenSSH key entries. It leaves unrelated `authorized_keys` entries unchanged.
 
+Cursor is discovered as `cursor-agent`, with a validated fallback to the legacy `agent` name. Talaria rejects an `agent` command that identifies itself as Grok Build and refuses to pin two tools to the same executable. Remove a stale or incorrect pin with `talaria server remove-tool cursor`.
+
 Tailscale SSH intercepts tailnet port 22 and bypasses OpenSSH `authorized_keys`. Setup detects this conflict. Choose Tailscale SSH or deliberately disable it first:
 
 ```sh

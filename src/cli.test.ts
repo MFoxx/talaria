@@ -24,7 +24,7 @@ describe('buildProgram', () => {
 
   it('exposes local server tool maintenance', () => {
     const server = buildProgram().commands.find((command) => command.name() === 'server');
-    expect(server?.commands.map((command) => command.name())).toContain('add-tool');
+    expect(server?.commands.map((command) => command.name())).toEqual(['add-tool', 'remove-tool']);
   });
 
   it('run requires tool, dir, and prompt', () => {

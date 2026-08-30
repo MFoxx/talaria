@@ -30,7 +30,7 @@ import {
   type SessionsCliOptions,
 } from './commands/actions.js';
 import { setupAction, type SetupCliOptions } from './commands/setup.js';
-import { addServerToolAction } from './commands/server-tools.js';
+import { addServerToolAction, removeServerToolAction } from './commands/server-tools.js';
 
 const outputOption = (): Option =>
   new Option('-o, --output <format>', 'output format').choices(['pretty', 'json', 'raw']);
@@ -144,6 +144,12 @@ export function buildProgram(): Command {
     .description('Enable or refresh an installed built-in tool without rerunning setup')
     .argument('<name>', 'claude-code | codex | cursor | grok')
     .action((tool: string) => addServerToolAction({ tool }));
+
+  server
+    .command('remove-tool')
+    .description('Disable a built-in tool and remove its executable pin')
+    .argument('<name>', 'claude-code | codex | cursor | grok')
+    .action((tool: string) => removeServerToolAction({ tool }));
 
   program
     .command('serve')

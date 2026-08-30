@@ -11,7 +11,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildAuthorizedKeysLine, buildServerConfig, buildTalariaForcedCommand } from './setup.js';
-import { addServerToolAction, refreshAuthorizedKeysCommands } from './server-tools.js';
+import {
+  addServerToolAction,
+  refreshAuthorizedKeysCommands,
+  removeServerToolAction,
+} from './server-tools.js';
 import type { RunResult } from '../util/exec.js';
 
 const okResult = (stdout = ''): RunResult => ({
@@ -140,5 +144,34 @@ describe('addServerToolAction', () => {
 
     expect(refreshed).toBe(0);
     expect(readFileSync(filePath, 'utf8')).toBe(unrelated);
+  });
+
+  it('removes a poisoned duplicate pin and keeps the remaining tool enabled', async () => {
+    const sharedBin = path.join(root, 'grok', 'bin', 'grok');
+    const nodePath = path.join(root, 'node', 'bin', 'node');
+    const cliPath = path.join(root, 'talaria', 'dist', 'cli.js');
+    writeFileSync(
+      configFile,
+      JSON.stringify(
+        buildServerConfig({
+          tools: ['cursor', 'grok'],
+          allowedDirs: ['/srv/projects'],
+          builtinToolBins: { cursor: sharedBin, grok: sharedBin },
+        }),
+      ),
+    );
+
+    await removeServerToolAction(
+      { tool: 'cursor', env: { XDG_CONFIG_HOME: path.join(root, 'config') }, home },
+      { write: () => {}, errLine: () => {} },
+      { nodePath, cliPath, run: () => Promise.resolve(okResult()) },
+    );
+
+    const config = JSON.parse(readFileSync(configFile, 'utf8')) as {
+      tools: string[];
+      builtinToolBins: Record<string, string>;
+    };
+    expect(config.tools).toEqual(['grok']);
+    expect(config.builtinToolBins).toEqual({ grok: sharedBin });
   });
 });
