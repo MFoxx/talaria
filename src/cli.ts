@@ -127,7 +127,7 @@ export function buildProgram(): Command {
     )
     .option(
       '--tool <name>',
-      'built-in server tool (repeatable: claude-code | codex | cursor | grok)',
+      'built-in server tool (repeatable: claude-code | codex | cursor | grok | pi [beta])',
       collect,
       [],
     )
@@ -142,7 +142,7 @@ export function buildProgram(): Command {
   server
     .command('add-tool')
     .description('Enable or refresh an installed built-in tool without rerunning setup')
-    .argument('<name>', 'claude-code | codex | cursor | grok')
+    .argument('<name>', 'claude-code | codex | cursor | grok | pi (beta)')
     .action((tool: string) => addServerToolAction({ tool }));
 
   server

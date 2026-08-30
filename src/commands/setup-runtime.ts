@@ -4,7 +4,7 @@ import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { runCommand } from '../util/exec.js';
 
-export type BuiltinToolName = 'claude-code' | 'codex' | 'cursor' | 'grok';
+export type BuiltinToolName = 'claude-code' | 'codex' | 'cursor' | 'grok' | 'pi';
 export type BuiltinToolBins = Partial<Record<BuiltinToolName, string>>;
 
 const TOOL_COMMANDS: Record<BuiltinToolName, readonly string[]> = {
@@ -12,6 +12,7 @@ const TOOL_COMMANDS: Record<BuiltinToolName, readonly string[]> = {
   codex: ['codex'],
   cursor: ['cursor-agent', 'agent'],
   grok: ['grok'],
+  pi: ['pi'],
 };
 
 /** Every built-in tool Talaria can pin, in the order shown during setup. */
@@ -143,7 +144,11 @@ export async function resolveSetupRuntime(
 
   const configuredBuiltins = options.tools.filter(
     (name): name is BuiltinToolName =>
-      name === 'claude-code' || name === 'codex' || name === 'cursor' || name === 'grok',
+      name === 'claude-code' ||
+      name === 'codex' ||
+      name === 'cursor' ||
+      name === 'grok' ||
+      name === 'pi',
   );
   const entries = await Promise.all(
     configuredBuiltins.map(async (name) => {

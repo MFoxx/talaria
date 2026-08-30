@@ -100,4 +100,16 @@ describe('setup runtime resolution', () => {
       }),
     ).rejects.toThrow(/cursor and grok resolve to the same executable/);
   });
+
+  it('resolves and pins the Pi executable', async () => {
+    const runtime = await resolveSetupRuntime({
+      tools: ['pi'],
+      nodePath: '/opt/node/bin/node',
+      cliPath: '/opt/talaria/dist/cli.js',
+      builtinToolBins: { pi: '/opt/pi/bin/pi' },
+      run: () => Promise.resolve(ok),
+    });
+    expect(runtime.builtinToolBins).toEqual({ pi: '/opt/pi/bin/pi' });
+    expect(runtime.serviceExecutablePath.split(':')[0]).toBe('/opt/pi/bin');
+  });
 });

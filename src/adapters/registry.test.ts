@@ -10,6 +10,7 @@ function config(overrides: Record<string, unknown>) {
       'claude-code': '/usr/local/bin/claude',
       codex: '/usr/local/bin/codex',
       grok: '/usr/local/bin/grok',
+      pi: '/usr/local/bin/pi',
     },
     ...overrides,
   });
@@ -48,11 +49,12 @@ describe('AdapterRegistry', () => {
   it('pins built-in adapters to configured absolute binaries', () => {
     const registry = AdapterRegistry.fromConfig(
       config({
-        tools: ['claude-code', 'codex', 'grok'],
+        tools: ['claude-code', 'codex', 'grok', 'pi'],
         builtinToolBins: {
           'claude-code': '/opt/tools/claude',
           codex: '/opt/tools/codex',
           grok: '/opt/tools/grok',
+          pi: '/opt/tools/pi',
         },
       }),
     );
@@ -60,6 +62,7 @@ describe('AdapterRegistry', () => {
     expect(registry.get('claude-code').buildSpawn(request).bin).toBe('/opt/tools/claude');
     expect(registry.get('codex').buildSpawn(request).bin).toBe('/opt/tools/codex');
     expect(registry.get('grok').buildSpawn(request).bin).toBe('/opt/tools/grok');
+    expect(registry.get('pi').buildSpawn(request).bin).toBe('/opt/tools/pi');
   });
 
   it('reports availability with the ToolInfo shape', async () => {
