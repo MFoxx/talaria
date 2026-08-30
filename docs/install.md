@@ -60,6 +60,14 @@ Repeat `--tool` and `--allowed-dir` as needed. In the wizard, paste the key gene
 
 Forced commands do not load shell startup files, so setup pins absolute paths for Node, Talaria, and built-in tools. Build and link a source checkout before setup. Invoking setup through `tsx src/cli.ts` cannot produce a runnable sshd forced command.
 
+If you install another supported CLI later, enable it locally on the workstation without rerunning setup:
+
+```sh
+talaria server add-tool grok
+```
+
+The command resolves and pins the executable, adds the tool to the server allowlist, and refreshes the PATH in Talaria's restricted OpenSSH key entries. It leaves unrelated `authorized_keys` entries unchanged.
+
 Tailscale SSH intercepts tailnet port 22 and bypasses OpenSSH `authorized_keys`. Setup detects this conflict. Choose Tailscale SSH or deliberately disable it first:
 
 ```sh

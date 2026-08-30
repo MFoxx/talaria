@@ -15,10 +15,16 @@ describe('buildProgram', () => {
       'ping',
       'run',
       'serve',
+      'server',
       'sessions',
       'setup',
       'tools',
     ]);
+  });
+
+  it('exposes local server tool maintenance', () => {
+    const server = buildProgram().commands.find((command) => command.name() === 'server');
+    expect(server?.commands.map((command) => command.name())).toContain('add-tool');
   });
 
   it('run requires tool, dir, and prompt', () => {

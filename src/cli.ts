@@ -30,6 +30,7 @@ import {
   type SessionsCliOptions,
 } from './commands/actions.js';
 import { setupAction, type SetupCliOptions } from './commands/setup.js';
+import { addServerToolAction } from './commands/server-tools.js';
 
 const outputOption = (): Option =>
   new Option('-o, --output <format>', 'output format').choices(['pretty', 'json', 'raw']);
@@ -133,6 +134,16 @@ export function buildProgram(): Command {
     .option('--skip-keygen', 'do not generate an SSH key')
     .option('--force', 'overwrite existing config files')
     .action((opts: SetupCliOptions) => setupAction(opts));
+
+  const server = program
+    .command('server')
+    .description('Maintain the configuration on this Talaria server');
+
+  server
+    .command('add-tool')
+    .description('Enable or refresh an installed built-in tool without rerunning setup')
+    .argument('<name>', 'claude-code | codex | cursor | grok')
+    .action((tool: string) => addServerToolAction({ tool }));
 
   program
     .command('serve')
