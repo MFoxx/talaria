@@ -1,7 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createCursorAdapter } from '../adapters/cursor.js';
+import { runCommand } from '../util/exec.js';
 import type { RunResult } from '../util/exec.js';
 import { buildServiceExecutablePath, resolveSetupRuntime } from './setup-runtime.js';
 
@@ -87,17 +89,60 @@ describe('setup runtime resolution', () => {
   });
 
   it('rejects different tools pinned to the same canonical executable', async () => {
-    await expect(
-      resolveSetupRuntime({
-        tools: ['cursor', 'grok'],
+    const root = mkdtempSync(path.join(os.tmpdir(), 'talaria-shared-tool-'));
+    try {
+      const target = path.join(root, 'shared-agent');
+      const cursorLauncher = path.join(root, 'cursor-agent');
+      const grokLauncher = path.join(root, 'grok');
+      writeFileSync(target, '');
+      symlinkSync(target, cursorLauncher);
+      symlinkSync(target, grokLauncher);
+
+      await expect(
+        resolveSetupRuntime({
+          tools: ['cursor', 'grok'],
+          nodePath: '/opt/node/bin/node',
+          cliPath: '/opt/talaria/dist/cli.js',
+          builtinToolBins: {
+            cursor: cursorLauncher,
+            grok: grokLauncher,
+          },
+          run: () => Promise.resolve(ok),
+        }),
+      ).rejects.toThrow(/cursor and grok resolve to the same executable/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a Cursor launcher whose target depends on its invocation name', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'talaria-cursor-launcher-'));
+    try {
+      const target = path.join(root, 'shared-agent');
+      const launcher = path.join(root, 'cursor-agent');
+      writeFileSync(
+        target,
+        '#!/bin/sh\ncase "$0" in *cursor-agent) echo "Cursor Agent 1.0"; exit 0;; *) exit 1;; esac\n',
+      );
+      chmodSync(target, 0o755);
+      symlinkSync(target, launcher);
+
+      const runtime = await resolveSetupRuntime({
+        tools: ['cursor'],
         nodePath: '/opt/node/bin/node',
         cliPath: '/opt/talaria/dist/cli.js',
-        builtinToolBins: {
-          cursor: '/opt/shared/bin/agent',
-          grok: '/opt/shared/bin/agent',
-        },
-        run: () => Promise.resolve(ok),
-      }),
-    ).rejects.toThrow(/cursor and grok resolve to the same executable/);
+        run: (bin, args) =>
+          bin === '/usr/bin/which'
+            ? Promise.resolve({ ...ok, stdout: launcher })
+            : runCommand(bin, args),
+      });
+
+      await expect(
+        createCursorAdapter(runtime.builtinToolBins.cursor).check(),
+      ).resolves.toMatchObject({ available: true });
+      expect(runtime.builtinToolBins.cursor).toBe(launcher);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
