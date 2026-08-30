@@ -282,6 +282,67 @@ describe('serveConnection (end to end)', () => {
     expect(followUp.at(-1)).toMatchObject({ type: 'done', status: 'completed', exitCode: 0 });
   });
 
+  it('runs Gemini in the requested cwd and resumes its stream-json session', async () => {
+    const harness = path.join(workDir, 'fake-gemini');
+    writeFileSync(
+      harness,
+      [
+        '#!/usr/bin/env node',
+        'const args = process.argv.slice(2);',
+        'if (!args.includes("--skip-trust")) process.exit(5);',
+        'const format = args.indexOf("--output-format");',
+        'if (format < 0 || args[format + 1] !== "stream-json") process.exit(6);',
+        `if (process.cwd() !== ${JSON.stringify(workDir)}) process.exit(7);`,
+        'const resume = args.indexOf("--resume");',
+        'const id = resume >= 0 ? args[resume + 1] : "native-gemini-session";',
+        'const prompt = args[args.indexOf("-p") + 1];',
+        'process.stdout.write(JSON.stringify({type:"init",session_id:id,model:"gemini-test"}) + "\\n");',
+        'process.stdout.write(JSON.stringify({type:"message",role:"assistant",content:prompt}) + "\\n");',
+      ].join('\n'),
+    );
+    chmodSync(harness, 0o755);
+    const geminiConfig = parseServerConfig({
+      tools: ['gemini'],
+      builtinToolBins: { gemini: harness },
+      allowedDirs: [workDir],
+      sessionDir,
+    });
+    const geminiCtx = buildContext(geminiConfig, { tailPollMs: 10 });
+
+    const initial = await send(geminiCtx, {
+      type: 'run',
+      tool: 'gemini',
+      dir: workDir,
+      prompt: 'first',
+      toolArgs: { model: 'gemini-test', approvalMode: 'auto_edit' },
+    });
+    const firstStarted = initial.find((message) => message.type === 'started');
+    if (firstStarted?.type !== 'started') throw new Error('missing Gemini started event');
+    expect(initial.at(-1)).toMatchObject({ type: 'done', status: 'completed', exitCode: 0 });
+
+    const followUp = await send(geminiCtx, {
+      type: 'continue',
+      conversationId: firstStarted.conversationId,
+      prompt: 'second',
+    });
+    const secondStarted = followUp.find((message) => message.type === 'started');
+    if (secondStarted?.type !== 'started') throw new Error('missing Gemini continuation event');
+    expect(new SessionStore(sessionDir).readMeta(secondStarted.sessionId)).toMatchObject({
+      conversationId: firstStarted.conversationId,
+      parentSessionId: firstStarted.sessionId,
+      nativeSessionId: 'native-gemini-session',
+      prompt: 'second',
+      toolArgs: { model: 'gemini-test', approvalMode: 'auto_edit' },
+    });
+    expect(
+      followUp
+        .filter((message) => message.type === 'output')
+        .map((message) => message.data)
+        .join(''),
+    ).toContain('second');
+    expect(followUp.at(-1)).toMatchObject({ type: 'done', status: 'completed', exitCode: 0 });
+  });
+
   it('attach with offset 0 replays a finished session then sends done', async () => {
     const runMsgs = await send(ctx, { type: 'run', tool: 'echo-tool', dir: workDir, prompt: 'X' });
     const started = runMsgs.find((m) => m.type === 'started');

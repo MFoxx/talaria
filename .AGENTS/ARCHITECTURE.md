@@ -88,7 +88,7 @@ Never weaken directory validation, turn argv into command strings, inherit an un
 
 ## 7. Tool adapters
 
-Built-ins cover Claude Code, Codex, Cursor, Grok, OpenCode, and Pi Code (beta). Generic tools are declared in server config with an executable, argv template, and accepted argument definitions.
+Built-ins cover Claude Code, Codex, Cursor, Gemini CLI, Grok, OpenCode, and Pi Code (beta). Generic tools are declared in server config with an executable, argv template, and accepted argument definitions.
 
 An adapter owns its metadata and accepted arguments, installation probe, spawn construction, and optional native-session continuation behavior. The registry is the authoritative runtime allowlist. Adding a built-in requires the adapter, registry entry, config/setup validation and executable pinning, plus exact-argv tests. Unrecognized tool arguments must never pass through.
 

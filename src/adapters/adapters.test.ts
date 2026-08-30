@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { claudeCodeAdapter } from './claude-code.js';
 import { codexAdapter } from './codex.js';
 import { cursorAdapter } from './cursor.js';
+import { geminiAdapter } from './gemini.js';
 import { grokAdapter } from './grok.js';
 import { openCodeAdapter } from './opencode.js';
 import { piAdapter } from './pi.js';
@@ -359,6 +360,129 @@ describe('cursor adapter', () => {
     expect(() =>
       cursorAdapter.buildSpawn({ ...base, prompt: 'p', toolArgs: { sandbox: 'read-only' } }),
     ).toThrow(/Unknown toolArg "sandbox"/);
+  });
+});
+
+describe('gemini adapter', () => {
+  it('uses headless mode with streaming JSON output by default', () => {
+    const spawn = geminiAdapter.buildSpawn({ ...base, prompt: 'go', toolArgs: {} });
+    expect(spawn).toEqual({
+      bin: 'gemini',
+      args: ['--skip-trust', '--output-format', 'stream-json', '-p', 'go'],
+    });
+  });
+
+  it('maps supported model, context, debug, and approval arguments', () => {
+    const spawn = geminiAdapter.buildSpawn({
+      ...base,
+      prompt: 'go',
+      toolArgs: {
+        model: 'gemini-2.5-pro',
+        outputFormat: 'json',
+        debug: true,
+        includeDirectories: ['src', '/shared docs'],
+        approvalMode: 'auto_edit',
+      },
+    });
+    expect(spawn.args).toEqual([
+      '--skip-trust',
+      '--output-format',
+      'json',
+      '--model',
+      'gemini-2.5-pro',
+      '--debug',
+      '--include-directories',
+      'src,/shared docs',
+      '--approval-mode',
+      'auto_edit',
+      '-p',
+      'go',
+    ]);
+  });
+
+  it('supports text output and rejects unsupported output and approval modes', () => {
+    expect(
+      geminiAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { outputFormat: 'text' },
+      }).args,
+    ).toContain('text');
+    expect(
+      geminiAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { yolo: true },
+      }).args,
+    ).toContain('--yolo');
+    expect(() =>
+      geminiAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { outputFormat: 'xml' },
+      }),
+    ).toThrow(/must be one of: text, json, stream-json/);
+    expect(() =>
+      geminiAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { approvalMode: 'unattended' },
+      }),
+    ).toThrow(/must be one of: default, auto_edit, yolo, plan/);
+    expect(() =>
+      geminiAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { yolo: true, approvalMode: 'yolo' },
+      }),
+    ).toThrow(/mutually exclusive/);
+  });
+
+  it('resumes the exact session ID extracted from a fragmented init event', () => {
+    const continuation = geminiAdapter.continuation!;
+    expect(continuation.verifyResumedSessionId).toBe(true);
+    expect(
+      continuation.buildSpawn({
+        ...base,
+        prompt: 'next',
+        toolArgs: {},
+        nativeSessionId: 'gemini-session',
+      }).args,
+    ).toEqual([
+      '--skip-trust',
+      '--output-format',
+      'stream-json',
+      '--resume',
+      'gemini-session',
+      '-p',
+      'next',
+    ]);
+    const extractor = continuation.createSessionIdExtractor();
+    expect(extractor.push('{"type":"init","session_')).toBeUndefined();
+    expect(extractor.push('id":"gemini-session","model":"gemini-2.5-pro"}\n')).toBe(
+      'gemini-session',
+    );
+  });
+
+  it('keeps prompt values as one argv element and rejects native session arguments', () => {
+    const nasty = '"; rm -rf / #';
+    const spawn = geminiAdapter.buildSpawn({ ...base, prompt: nasty, toolArgs: {} });
+    expect(spawn.args.at(-1)).toBe(nasty);
+    expect(spawn.args.filter((arg) => arg === nasty)).toHaveLength(1);
+    expect(() =>
+      geminiAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { resume: 'external' },
+      }),
+    ).toThrow(/Unknown toolArg "resume"/);
+    expect(() =>
+      geminiAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { allFiles: true },
+      }),
+    ).toThrow(/Unknown toolArg "allFiles"/);
   });
 });
 

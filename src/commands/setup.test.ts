@@ -370,12 +370,14 @@ describe('setupAction', () => {
       'claude-code',
       'codex',
       'cursor',
+      'gemini',
       'grok',
       'opencode',
       'pi',
     ]);
     expect(offered.find((c) => c.value === 'claude-code')?.checked).toBe(true);
     expect(offered.find((c) => c.value === 'codex')?.checked).toBe(false);
+    expect(offered.find((c) => c.value === 'gemini')?.checked).toBe(false);
     const config = JSON.parse(
       readFileSync(path.join(root, 'config', 'talaria', 'server.json'), 'utf8'),
     ) as Record<string, unknown>;
