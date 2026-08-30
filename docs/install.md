@@ -24,6 +24,10 @@ talaria --version
 
 On the workstation, authenticate every coding tool you intend to enable for the account that will run Talaria.
 
+OpenCode is available as the `opencode` built-in. Install and authenticate its CLI with
+`opencode auth login`, then select `opencode` during setup or enable it later with
+`talaria server add-tool opencode`.
+
 To install a development checkout instead:
 
 ```sh

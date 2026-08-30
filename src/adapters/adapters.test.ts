@@ -3,12 +3,81 @@ import { claudeCodeAdapter } from './claude-code.js';
 import { codexAdapter } from './codex.js';
 import { cursorAdapter } from './cursor.js';
 import { grokAdapter } from './grok.js';
+import { openCodeAdapter } from './opencode.js';
 import { piAdapter } from './pi.js';
 import { createGenericAdapter } from './generic.js';
 import { validateToolArgs } from './args.js';
 import { isTalariaError } from '../protocol/errors.js';
 
 const base = { dir: '/proj', timeout: 600 };
+
+describe('opencode adapter', () => {
+  it('uses non-interactive JSON mode and terminates option parsing before the prompt', () => {
+    const prompt = '--session attacker-controlled';
+    expect(openCodeAdapter.buildSpawn({ ...base, prompt, toolArgs: {} })).toEqual({
+      bin: 'opencode',
+      args: ['run', '--format', 'json', '--', prompt],
+    });
+  });
+
+  it('maps supported execution arguments', () => {
+    expect(
+      openCodeAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: {
+          model: 'anthropic/claude-sonnet-4-6',
+          agent: 'build',
+          variant: 'high',
+          thinking: true,
+          auto: true,
+        },
+      }).args,
+    ).toEqual([
+      'run',
+      '--format',
+      'json',
+      '--model',
+      'anthropic/claude-sonnet-4-6',
+      '--agent',
+      'build',
+      '--variant',
+      'high',
+      '--thinking',
+      '--auto',
+      '--',
+      'go',
+    ]);
+  });
+
+  it('resumes the exact session ID extracted from fragmented JSONL', () => {
+    const continuation = openCodeAdapter.continuation!;
+    expect(continuation.verifyResumedSessionId).toBe(true);
+    expect(
+      continuation.buildSpawn({
+        ...base,
+        prompt: 'next',
+        toolArgs: {},
+        nativeSessionId: 'ses_open-code',
+      }).args,
+    ).toEqual(['run', '--format', 'json', '--session', 'ses_open-code', '--', 'next']);
+    const extractor = continuation.createSessionIdExtractor();
+    expect(extractor.push('{"type":"step_start","session')).toBeUndefined();
+    expect(extractor.push('ID":"ses_open-code","part":{"type":"step-start"}}\n')).toBe(
+      'ses_open-code',
+    );
+  });
+
+  it('does not allow callers to select a native session through tool arguments', () => {
+    expect(() =>
+      openCodeAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { session: 'other' },
+      }),
+    ).toThrow(/Unknown toolArg "session"/);
+  });
+});
 
 describe('pi adapter', () => {
   it('uses JSON event-stream mode and keeps the prompt as one argv element', () => {

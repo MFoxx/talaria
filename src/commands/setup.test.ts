@@ -366,7 +366,14 @@ describe('setupAction', () => {
     );
 
     const offered = prompt.checkboxCalls[0]?.choices ?? [];
-    expect(offered.map((c) => c.value)).toEqual(['claude-code', 'codex', 'cursor', 'grok', 'pi']);
+    expect(offered.map((c) => c.value)).toEqual([
+      'claude-code',
+      'codex',
+      'cursor',
+      'grok',
+      'opencode',
+      'pi',
+    ]);
     expect(offered.find((c) => c.value === 'claude-code')?.checked).toBe(true);
     expect(offered.find((c) => c.value === 'codex')?.checked).toBe(false);
     const config = JSON.parse(

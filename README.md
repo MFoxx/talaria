@@ -2,7 +2,7 @@
 
 Run and orchestrate coding agents on another machine—without moving your repositories, credentials, or development environment there.
 
-Talaria turns a workstation reachable through Tailscale into a remote execution target for Claude Code, Codex, Cursor (beta), Grok, Pi Code (beta), and custom tools. Start work from a laptop, server, automation, or your own orchestrator; stream the result live; disconnect and reconnect; inspect or stop sessions; and continue supported tool-native conversations.
+Talaria turns a workstation reachable through Tailscale into a remote execution target for Claude Code, Codex, Cursor (beta), Grok, OpenCode, Pi Code (beta), and custom tools. Start work from a laptop, server, automation, or your own orchestrator; stream the result live; disconnect and reconnect; inspect or stop sessions; and continue supported tool-native conversations.
 
 ```sh
 talaria run -H desktop -t codex -d ~/projects/my-app \

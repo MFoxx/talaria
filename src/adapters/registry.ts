@@ -13,6 +13,7 @@ import { createClaudeCodeAdapter } from './claude-code.js';
 import { createCodexAdapter } from './codex.js';
 import { createCursorAdapter } from './cursor.js';
 import { createGrokAdapter } from './grok.js';
+import { createOpenCodeAdapter } from './opencode.js';
 import { createPiAdapter } from './pi.js';
 import { createGenericAdapter } from './generic.js';
 import type { ToolAdapter } from './types.js';
@@ -34,6 +35,7 @@ export class AdapterRegistry {
       codex: createCodexAdapter(config.builtinToolBins.codex),
       cursor: createCursorAdapter(config.builtinToolBins.cursor),
       grok: createGrokAdapter(config.builtinToolBins.grok),
+      opencode: createOpenCodeAdapter(config.builtinToolBins.opencode),
       pi: createPiAdapter(config.builtinToolBins.pi),
     };
     const customByName = new Map(config.customTools.map((t) => [t.name, t]));
