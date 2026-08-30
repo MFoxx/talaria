@@ -157,4 +157,16 @@ describe('setup runtime resolution', () => {
     expect(runtime.builtinToolBins).toEqual({ pi: '/opt/pi/bin/pi' });
     expect(runtime.serviceExecutablePath.split(':')[0]).toBe('/opt/pi/bin');
   });
+
+  it('resolves and pins the OpenCode executable', async () => {
+    const runtime = await resolveSetupRuntime({
+      tools: ['opencode'],
+      nodePath: '/opt/node/bin/node',
+      cliPath: '/opt/talaria/dist/cli.js',
+      builtinToolBins: { opencode: '/opt/opencode/bin/opencode' },
+      run: () => Promise.resolve(ok),
+    });
+    expect(runtime.builtinToolBins).toEqual({ opencode: '/opt/opencode/bin/opencode' });
+    expect(runtime.serviceExecutablePath.split(':')[0]).toBe('/opt/opencode/bin');
+  });
 });

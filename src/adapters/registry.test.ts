@@ -10,6 +10,7 @@ function config(overrides: Record<string, unknown>) {
       'claude-code': '/usr/local/bin/claude',
       codex: '/usr/local/bin/codex',
       grok: '/usr/local/bin/grok',
+      opencode: '/usr/local/bin/opencode',
       pi: '/usr/local/bin/pi',
     },
     ...overrides,
@@ -49,11 +50,12 @@ describe('AdapterRegistry', () => {
   it('pins built-in adapters to configured absolute binaries', () => {
     const registry = AdapterRegistry.fromConfig(
       config({
-        tools: ['claude-code', 'codex', 'grok', 'pi'],
+        tools: ['claude-code', 'codex', 'grok', 'opencode', 'pi'],
         builtinToolBins: {
           'claude-code': '/opt/tools/claude',
           codex: '/opt/tools/codex',
           grok: '/opt/tools/grok',
+          opencode: '/opt/tools/opencode',
           pi: '/opt/tools/pi',
         },
       }),
@@ -62,6 +64,7 @@ describe('AdapterRegistry', () => {
     expect(registry.get('claude-code').buildSpawn(request).bin).toBe('/opt/tools/claude');
     expect(registry.get('codex').buildSpawn(request).bin).toBe('/opt/tools/codex');
     expect(registry.get('grok').buildSpawn(request).bin).toBe('/opt/tools/grok');
+    expect(registry.get('opencode').buildSpawn(request).bin).toBe('/opt/tools/opencode');
     expect(registry.get('pi').buildSpawn(request).bin).toBe('/opt/tools/pi');
   });
 

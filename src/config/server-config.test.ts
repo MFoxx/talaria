@@ -117,4 +117,13 @@ describe('parseServerConfig', () => {
     expect(cfg.tools).toEqual(['grok']);
     expect(cfg.builtinToolBins).toEqual({ grok: '/usr/local/bin/grok' });
   });
+
+  it('accepts opencode as a pinned built-in tool', () => {
+    const cfg = parseServerConfig({
+      tools: ['opencode'],
+      builtinToolBins: { opencode: '/usr/local/bin/opencode' },
+    });
+    expect(cfg.tools).toEqual(['opencode']);
+    expect(cfg.builtinToolBins).toEqual({ opencode: '/usr/local/bin/opencode' });
+  });
 });
