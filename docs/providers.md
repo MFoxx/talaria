@@ -71,6 +71,8 @@ Supported arguments:
 - `model` — model name.
 - `force` — lets Cursor make file changes without confirmation; use with caution.
 
+Cursor is discovered as `cursor-agent`, with a validated fallback to the legacy `agent` executable. Talaria rejects an `agent` command that identifies itself as Grok Build and refuses to pin two tools to the same executable. Remove a stale or incorrect pin with `talaria server remove-tool cursor`.
+
 ### macOS login keychain issue
 
 Cursor support is beta. Cursor may keep its login in the macOS login keychain, while a Talaria OpenSSH forced command runs outside the interactive graphical login context. Cursor can consequently fail with:

@@ -22,7 +22,7 @@ npm install -g @mfoxx/talaria@beta
 talaria --version
 ```
 
-On the workstation, authenticate every coding tool you intend to enable for the account that will run Talaria.
+On the workstation, authenticate every coding tool you intend to enable for the account that will run Talaria. See [Providers](providers.md) for tool-specific setup and arguments.
 
 To install a development checkout instead:
 
@@ -48,7 +48,7 @@ Use this mode when command-level isolation matters. Talaria installs a dedicated
 
 ```sh
 # Workstation
-talaria setup --role server --transport openssh --tool codex \
+talaria setup --role server --transport openssh --tool TOOL_NAME \
   --allowed-dir /Users/me/projects
 
 # Controller
@@ -63,12 +63,10 @@ Forced commands do not load shell startup files, so setup pins absolute paths fo
 If you install another supported CLI later, enable it locally on the workstation without rerunning setup:
 
 ```sh
-talaria server add-tool grok
+talaria server add-tool <tool>
 ```
 
 The command resolves and pins the executable, adds the tool to the server allowlist, and refreshes the PATH in Talaria's restricted OpenSSH key entries. It leaves unrelated `authorized_keys` entries unchanged.
-
-Cursor is discovered as `cursor-agent`, with a validated fallback to the legacy `agent` name. Talaria rejects an `agent` command that identifies itself as Grok Build and refuses to pin two tools to the same executable. Remove a stale or incorrect pin with `talaria server remove-tool cursor`. See [Providers](providers.md) for provider-specific setup, arguments, and Cursor's macOS login-keychain limitation.
 
 Tailscale SSH intercepts tailnet port 22 and bypasses OpenSSH `authorized_keys`. Setup detects this conflict. Choose Tailscale SSH or deliberately disable it first:
 
@@ -82,7 +80,7 @@ This mode avoids SSH key and host-key management:
 
 ```sh
 # Workstation
-talaria setup --role server --transport tailscale-ssh --tool codex \
+talaria setup --role server --transport tailscale-ssh --tool TOOL_NAME \
   --allowed-dir /Users/me/projects
 tailscale set --ssh=true
 
@@ -112,7 +110,7 @@ talaria setup --role client --transport tailscale-ssh \
 ```sh
 talaria ping -H desktop
 talaria tools -H desktop
-talaria run -H desktop -t codex -d /absolute/allowed/project \
+talaria run -H desktop -t TOOL_NAME -d /absolute/allowed/project \
   -p "Summarize this repository"
 ```
 
