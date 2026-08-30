@@ -6,7 +6,6 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
-docs
 
 skills/
 

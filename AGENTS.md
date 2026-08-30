@@ -1,45 +1,47 @@
 # talaria
 
-Structured remote tool execution over Tailscale SSH. Full design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Talaria is a TypeScript CLI and library for orchestrating coding-agent sessions on remote machines over SSH. A controller sends structured requests to `talaria serve` on a workstation; the server validates them, starts an approved tool, persists session state and output, and streams typed events back. Sessions can later be listed, attached to, stopped, or continued.
 
-## Status
+Read [`.AGENTS/ARCHITECTURE.md`](.AGENTS/ARCHITECTURE.md) before changing module seams, the wire protocol, process execution, session persistence, or transport behavior. Keep `docs/` for user-facing documentation.
 
-Working `0.1.0` (M1–M4 complete). Layout:
+## Project map
 
-- `src/protocol/` — wire messages, errors, JSONL/output-log framing (zod schemas shared by both ends)
-- `src/config/` — server/client config + XDG paths
-- `src/adapters/` — tool adapters (claude-code, codex, cursor, generic) + registry
-- `src/server/` — `serve` loop, runner, session store, tmux/direct process managers, dir validation
-- `src/client/` — SSH transport, `TalariaClient`, offset cache
-- `src/commands/` + `src/cli.ts` — commander CLI (run/attach/sessions/kill/tools/ping/config/setup/serve)
+- `src/protocol/` — shared Zod schemas, errors, JSONL messages, and framed output logs.
+- `src/config/` — validated client/server configuration and XDG paths.
+- `src/adapters/` — tool adapters, built-in coding agents, and custom tools.
+- `src/server/` — dispatch, execution, process backends, validation, persistence, and reaping.
+- `src/client/` — SSH transports, the programmatic client, and reconnect offsets.
+- `src/commands/` — CLI actions, output formatting, and guided setup.
+- `src/cli.ts` — Commander wiring and process-level error handling.
+- `src/index.ts` — public library exports.
+- `docs/` — public documentation.
+- `.AGENTS/` — internal architecture and maintainer context.
 
-tmux ≥ 3 is the persistence backend (verified via `src/server/tmux.integration.test.ts`, which
-skips when tmux is absent); `DirectProcessManager` is the fallback. The `serve` connection loop is
-one-request-per-connection over JSONL on stdio.
+## Toolchain
 
-## Stack
-
-- TypeScript (strict), ESM (`"type": "module"`, `NodeNext` resolution)
-- npm as the package manager — commit `package-lock.json`
-- ESLint (flat config, typescript-eslint) + Prettier
-- Vitest for tests
+- TypeScript in strict mode, ESM, and NodeNext module resolution.
+- Node.js 20 or newer; npm is the package manager. Commit `package-lock.json` changes.
+- ESLint with typescript-eslint, Prettier, and Vitest.
 
 ## Commands
 
-- `npm run build` — compile to `dist/`
-- `npm run dev` — run the CLI from source via `tsx`
-- `npm run typecheck` — `tsc --noEmit`
-- `npm run lint` / `npm run lint:fix`
-- `npm run format` / `npm run format:check`
-- `npm test` — Vitest
+- `npm install` — install dependencies.
+- `npm run dev -- <command>` — run the CLI from source.
+- `npm run build` — compile into `dist/`.
+- `npm run typecheck` — check TypeScript without emitting files.
+- `npm run lint` / `npm run lint:fix` — check or fix lint violations.
+- `npm run format` / `npm run format:check` — write or verify formatting.
+- `npm test` — run Vitest; external integration tests skip when prerequisites are absent.
 
-Run `typecheck`, `lint`, and `test` before considering a change done.
+Before considering a change complete, run `npm run typecheck`, `npm run lint`, and `npm test`. Run `npm run format:check` for documentation or formatting-sensitive changes.
 
-## Conventions
+## Engineering guidelines
 
-- No `any` — it's an ESLint error (`@typescript-eslint/no-explicit-any`), not a warning.
-- Tool adapters must build argv arrays explicitly; never shell-interpolate user/prompt input into
-  a command string (see docs/ARCHITECTURE.md §7 and the threat table in §6).
-- This tool executes commands on a remote host on the agent's behalf. Treat anything touching
-  spawn/exec, path resolution, or the server config whitelist as security-sensitive — flag
-  shortcuts instead of taking them.
+- Do not use `any`; `@typescript-eslint/no-explicit-any` is an error.
+- Keep CLI wiring thin. Put behavior behind explicit interfaces in command, client, server, protocol, or adapter modules.
+- Treat protocol schemas as the source of truth. Both endpoints validate with the shared schemas; protocol changes require tests on both sides of the seam.
+- Tool adapters must construct an executable and explicit argv array. Never interpolate prompts, paths, or tool arguments into a shell command.
+- Validate and canonicalize remote working directories before execution. Preserve allowlist and symlink protections.
+- Treat spawn/exec, executable lookup, SSH setup, paths, environment variables, and server allowlists as security-sensitive.
+- Reserve `serve` stdout for JSONL protocol traffic; diagnostics belong on stderr or in the log.
+- Add or update tests with behavior changes. Prefer injected dependencies and test a module through its interface.
