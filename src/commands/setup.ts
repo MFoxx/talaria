@@ -258,7 +258,10 @@ const ROLE_CHOICES: readonly SelectChoice<'client' | 'server'>[] = [
 const TOOL_LABELS: Record<BuiltinToolName, { label: string; description: string }> = {
   'claude-code': { label: 'Claude Code', description: "Anthropic's Claude Code CLI (`claude`)." },
   codex: { label: 'Codex', description: "OpenAI's Codex CLI (`codex`)." },
-  cursor: { label: 'Cursor', description: "Cursor's agent CLI (`cursor-agent`)." },
+  cursor: {
+    label: 'Cursor (beta)',
+    description: "Cursor's agent CLI (`cursor-agent`); see the macOS keychain limitation.",
+  },
   grok: { label: 'Grok Build', description: "xAI's Grok coding CLI (`grok`)." },
   pi: { label: 'Pi Code (beta)', description: 'Beta support for the Pi Code CLI (`pi`).' },
 };

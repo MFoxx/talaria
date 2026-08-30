@@ -63,6 +63,7 @@ describe('renderSessions', () => {
 describe('renderTools', () => {
   const tools: ToolInfo[] = [
     { name: 'claude-code', available: true, version: '1.0.25' },
+    { name: 'cursor', available: true, version: '2026.08.25' },
     { name: 'aider', available: false, error: 'binary not found' },
   ];
 
@@ -70,5 +71,12 @@ describe('renderTools', () => {
     const out = renderTools(tools, 'pretty');
     expect(out).toContain('✓ available');
     expect(out).toContain('✗ binary not found');
+    expect(out).toContain('cursor (beta)');
+  });
+
+  it('keeps the stable cursor identifier in json output', () => {
+    expect(JSON.parse(renderTools(tools, 'json'))).toContainEqual(
+      expect.objectContaining({ name: 'cursor' }),
+    );
   });
 });

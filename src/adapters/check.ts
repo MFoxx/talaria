@@ -16,14 +16,18 @@ export async function checkBinaryVersion(
 ): Promise<ToolAvailability> {
   try {
     const result = await runCommand(bin, versionArgs);
+    const line = `${result.stdout}\n${result.stderr}`
+      .split('\n')
+      .map((value) => value.trim())
+      .find((value) => value.length > 0)
+      ?.slice(0, 500);
     if (result.code === 0) {
-      const line = (result.stdout || result.stderr)
-        .split('\n')
-        .map((l) => l.trim())
-        .find((l) => l.length > 0);
       return line ? { available: true, version: line } : { available: true };
     }
-    return { available: false, error: `exited with code ${result.code}` };
+    return {
+      available: false,
+      error: `exited with code ${result.code}${line ? `: ${line}` : ''}`,
+    };
   } catch (err) {
     if (err instanceof BinaryNotFoundError) {
       return { available: false, error: 'binary not found' };

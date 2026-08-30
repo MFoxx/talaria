@@ -63,7 +63,7 @@ export function renderTools(tools: ToolInfo[], format: OutputFormat): string {
   if (format === 'json') return renderJson(tools);
   if (tools.length === 0) return 'No tools configured.';
   const rows = tools.map((t) => [
-    t.name,
+    t.name === 'cursor' ? 'cursor (beta)' : t.name,
     t.version ?? '',
     t.available ? '✓ available' : `✗ ${t.error ?? 'unavailable'}`,
   ]);

@@ -1,12 +1,4 @@
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -90,9 +82,9 @@ describe('addServerToolAction', () => {
       builtinToolBins: Record<string, string>;
     };
     expect(config.tools).toEqual(['codex', 'grok']);
-    expect(config.builtinToolBins).toEqual({ codex: codexBin, grok: realpathSync(grokBin) });
+    expect(config.builtinToolBins).toEqual({ codex: codexBin, grok: grokBin });
     const authorizedKeys = readFileSync(path.join(home, '.ssh', 'authorized_keys'), 'utf8');
-    expect(authorizedKeys).toContain(path.dirname(realpathSync(grokBin)));
+    expect(authorizedKeys).toContain(path.dirname(grokBin));
     expect(authorizedKeys).toContain(
       'no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty',
     );

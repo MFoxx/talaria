@@ -70,6 +70,23 @@ The command resolves and pins the executable, adds the tool to the server allowl
 
 Cursor is discovered as `cursor-agent`, with a validated fallback to the legacy `agent` name. Talaria rejects an `agent` command that identifies itself as Grok Build and refuses to pin two tools to the same executable. Remove a stale or incorrect pin with `talaria server remove-tool cursor`.
 
+### Cursor beta: macOS keychain authentication
+
+Cursor support is beta. On macOS, Cursor may store its login in the user's login keychain. A Talaria OpenSSH forced command runs outside the interactive graphical login context, so Cursor can fail with:
+
+```text
+Error: Your macOS login keychain is locked.
+```
+
+Unlock the keychain interactively on the workstation, then retry:
+
+```sh
+security unlock-keychain "$HOME/Library/Keychains/login.keychain-db"
+talaria tools
+```
+
+Cursor recommends `CURSOR_API_KEY` for headless execution, but Talaria does not yet provide secure tool-specific secret injection. A project `.env`, shell profile, or terminal `export` is not automatically loaded by the OpenSSH forced command. Do not store API keys directly in `server.json`. This limitation will be revisited in a future release.
+
 Tailscale SSH intercepts tailnet port 22 and bypasses OpenSSH `authorized_keys`. Setup detects this conflict. Choose Tailscale SSH or deliberately disable it first:
 
 ```sh

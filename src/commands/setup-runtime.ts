@@ -118,7 +118,17 @@ async function resolveToolBin(
       `${name} is configured but ${TOOL_COMMANDS[name].join(' or ')} was not found in PATH`,
     );
   }
-  return realpathSync(found);
+  return found;
+}
+
+function executableIdentity(bin: string): string {
+  try {
+    return realpathSync(bin);
+  } catch {
+    // Explicit test/setup overrides may describe a future path. Identical absolute
+    // launchers can still be rejected even when their targets do not exist yet.
+    return bin;
+  }
 }
 
 /**
@@ -159,11 +169,12 @@ export async function resolveSetupRuntime(
   const builtinToolBins = Object.fromEntries(entries) as BuiltinToolBins;
   const ownersByBin = new Map<string, BuiltinToolName>();
   for (const [name, bin] of entries) {
-    const existing = ownersByBin.get(bin);
+    const identity = executableIdentity(bin);
+    const existing = ownersByBin.get(identity);
     if (existing) {
-      throw new Error(`${existing} and ${name} resolve to the same executable: ${bin}`);
+      throw new Error(`${existing} and ${name} resolve to the same executable: ${identity}`);
     }
-    ownersByBin.set(bin, name);
+    ownersByBin.set(identity, name);
   }
   return {
     nodePath,
