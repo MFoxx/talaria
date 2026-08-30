@@ -119,7 +119,7 @@ npm test
 npm run format:check
 ```
 
-Maintainer architecture notes live in [`.AGENTS/ARCHITECTURE.md`](.AGENTS/ARCHITECTURE.md).
+Maintainer architecture notes live in [architecture.md](.humans/architecture.md).
 
 ## Issues and feature requests
 
