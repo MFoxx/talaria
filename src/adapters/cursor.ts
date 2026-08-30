@@ -42,7 +42,7 @@ function buildArgs(req: BuildSpawnRequest, nativeSessionId?: string): string[] {
 export function createCursorAdapter(bin = DEFAULT_BIN): ToolAdapter {
   return {
     name: 'cursor',
-    description: 'Cursor CLI (Cursor Agent)',
+    description: 'Cursor CLI (Cursor Agent, beta)',
     acceptedArgs,
     continuation: {
       createSessionIdExtractor: () => createJsonlSessionIdExtractor((event) => event.session_id),
