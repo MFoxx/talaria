@@ -39,6 +39,8 @@ talaria setup
 
 Choose `server` on the workstation that owns the repositories and tools, and `client` on the machine initiating work. See [Installation and setup](docs/install.md) for requirements, security tradeoffs, and non-interactive configuration, and [Providers](docs/providers.md) for tool-specific setup and arguments.
 
+For agent-facing setup and CLI guidance, install the skills from [talaria-skills](https://github.com/MFoxx/talaria-skills).
+
 Then verify the host and start a task:
 
 ```sh
