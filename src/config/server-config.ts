@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { defaultLogFile, defaultSessionDir, expandTilde, serverConfigPath } from './paths.js';
 
 /** Tool names shipped as built-in adapters (ARCHITECTURE §7). */
-export const BUILTIN_TOOL_NAMES = ['claude-code', 'codex', 'cursor', 'grok'] as const;
+export const BUILTIN_TOOL_NAMES = ['claude-code', 'codex', 'cursor', 'grok', 'pi'] as const;
 
 export const LogLevel = z.enum(['debug', 'info', 'warn', 'error']);
 export type LogLevel = z.infer<typeof LogLevel>;
@@ -43,6 +43,7 @@ const ServerConfigInput = z.strictObject({
       codex: z.string().min(1).optional(),
       cursor: z.string().min(1).optional(),
       grok: z.string().min(1).optional(),
+      pi: z.string().min(1).optional(),
     })
     .default({}),
   allowedDirs: z.array(z.string()).default([]),

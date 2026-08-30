@@ -3,11 +3,67 @@ import { claudeCodeAdapter } from './claude-code.js';
 import { codexAdapter } from './codex.js';
 import { cursorAdapter } from './cursor.js';
 import { grokAdapter } from './grok.js';
+import { piAdapter } from './pi.js';
 import { createGenericAdapter } from './generic.js';
 import { validateToolArgs } from './args.js';
 import { isTalariaError } from '../protocol/errors.js';
 
 const base = { dir: '/proj', timeout: 600 };
+
+describe('pi adapter', () => {
+  it('uses JSON event-stream mode and keeps the prompt as one argv element', () => {
+    const prompt = 'fix it; rm -rf /';
+    expect(piAdapter.buildSpawn({ ...base, prompt, toolArgs: {} })).toEqual({
+      bin: 'pi',
+      args: ['--mode', 'json', prompt],
+    });
+  });
+
+  it('maps supported model arguments and rejects unsupported thinking levels', () => {
+    expect(
+      piAdapter.buildSpawn({
+        ...base,
+        prompt: 'go',
+        toolArgs: { provider: 'anthropic', model: 'claude-sonnet-4-6', thinking: 'high' },
+      }).args,
+    ).toEqual([
+      '--mode',
+      'json',
+      '--provider',
+      'anthropic',
+      '--model',
+      'claude-sonnet-4-6',
+      '--thinking',
+      'high',
+      'go',
+    ]);
+    expect(() =>
+      piAdapter.buildSpawn({ ...base, prompt: 'go', toolArgs: { thinking: 'unlimited' } }),
+    ).toThrow(/must be one of/);
+  });
+
+  it('resumes the exact session ID extracted from a fragmented session header', () => {
+    const continuation = piAdapter.continuation!;
+    expect(continuation.verifyResumedSessionId).toBe(true);
+    expect(
+      continuation.buildSpawn({
+        ...base,
+        prompt: 'next',
+        toolArgs: {},
+        nativeSessionId: 'pi-session',
+      }).args,
+    ).toEqual(['--mode', 'json', '--session', 'pi-session', 'next']);
+    const extractor = continuation.createSessionIdExtractor();
+    expect(extractor.push('{"type":"session","version":3,"id":"pi-')).toBeUndefined();
+    expect(extractor.push('session","cwd":"/proj"}\n')).toBe('pi-session');
+  });
+
+  it('rejects session selection through untrusted tool arguments', () => {
+    expect(() =>
+      piAdapter.buildSpawn({ ...base, prompt: 'go', toolArgs: { session: 'other' } }),
+    ).toThrow(/Unknown toolArg/);
+  });
+});
 
 describe('claude-code adapter', () => {
   it('builds the base invocation with prompt last', () => {

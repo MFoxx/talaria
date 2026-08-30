@@ -263,6 +263,7 @@ const TOOL_LABELS: Record<BuiltinToolName, { label: string; description: string 
     description: "Cursor's agent CLI (`cursor-agent`); see the macOS keychain limitation.",
   },
   grok: { label: 'Grok Build', description: "xAI's Grok coding CLI (`grok`)." },
+  pi: { label: 'Pi Code (beta)', description: 'Beta support for the Pi Code CLI (`pi`).' },
 };
 
 /**
@@ -291,7 +292,7 @@ async function selectServerTools(
   const selected = await prompt.checkbox('Which CLI tools should this server run?', choices);
   if (selected.length === 0) {
     throw new Error(
-      'No tools selected. Install at least one supported CLI (claude, codex, cursor-agent, or grok) and rerun setup.',
+      'No tools selected. Install at least one supported CLI (claude, codex, cursor-agent, grok, or pi) and rerun setup.',
     );
   }
   const missing = selected.filter(
@@ -636,13 +637,19 @@ async function configureServer(context: SetupWorkflowContext): Promise<string> {
     tools = await selectServerTools(prompt, run, io);
   } else {
     throw new Error(
-      'Specify which tools to configure with --tool (claude-code, codex, cursor, and/or grok) for non-interactive server setup.',
+      'Specify which tools to configure with --tool (claude-code, codex, cursor, grok, and/or pi) for non-interactive server setup.',
     );
   }
   for (const tool of tools) {
-    if (tool !== 'claude-code' && tool !== 'codex' && tool !== 'cursor' && tool !== 'grok') {
+    if (
+      tool !== 'claude-code' &&
+      tool !== 'codex' &&
+      tool !== 'cursor' &&
+      tool !== 'grok' &&
+      tool !== 'pi'
+    ) {
       throw new Error(
-        `Unsupported setup tool ${tool}; expected claude-code, codex, cursor, or grok`,
+        `Unsupported setup tool ${tool}; expected claude-code, codex, cursor, grok, or pi`,
       );
     }
   }
