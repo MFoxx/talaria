@@ -1,3 +1,5 @@
+![image banner](/images/banner.png)
+
 # Talaria
 
 Run and orchestrate coding agents on another machine—without moving your repositories, credentials, or development environment there.
@@ -35,7 +37,7 @@ npm install -g talaria
 talaria setup
 ```
 
-Choose `server` on the workstation that owns the repositories and tools, and `client` on the machine initiating work. See [Installation and setup](docs/install.md) for requirements, security tradeoffs, and non-interactive configuration.
+Choose `server` on the workstation that owns the repositories and tools, and `client` on the machine initiating work. See [Installation and setup](docs/install.md) for requirements, security tradeoffs, and non-interactive configuration, and [Providers](docs/providers.md) for tool-specific setup and arguments.
 
 Then verify the host and start a task:
 
@@ -115,7 +117,7 @@ npm test
 npm run format:check
 ```
 
-Maintainer architecture notes live in [`.AGENTS/ARCHITECTURE.md`](.AGENTS/ARCHITECTURE.md).
+Maintainer architecture notes live in [`.humans/architecture.md`](.humans/architecture.md).
 
 ## Issues and feature requests
 
