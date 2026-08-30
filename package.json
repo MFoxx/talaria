@@ -1,6 +1,6 @@
 {
   "name": "talaria",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Orchestrate coding-agent sessions on remote machines over Tailscale and SSH.",
   "license": "MIT",
   "repository": {
