@@ -1,5 +1,5 @@
 {
-  "name": "talaria",
+  "name": "@mfoxx/talaria",
   "version": "0.1.9",
   "description": "Orchestrate coding-agent sessions on remote machines over Tailscale and SSH.",
   "license": "MIT",
@@ -20,7 +20,7 @@
   ],
   "type": "module",
   "bin": {
-    "talaria": "./dist/cli.js"
+    "talaria": "dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

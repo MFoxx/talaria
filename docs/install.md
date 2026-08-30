@@ -18,7 +18,7 @@ Without tmux, Talaria uses direct child processes. That fallback is non-persiste
 ## Install
 
 ```sh
-npm install -g talaria
+npm install -g @mfoxx/talaria@beta
 talaria --version
 ```
 

@@ -1,4 +1,4 @@
-![image banner](/images/banner.png)
+![Talaria banner](https://raw.githubusercontent.com/MFoxx/talaria/main/images/banner.png)
 
 # Talaria
 
@@ -33,7 +33,7 @@ Talaria is not a remote shell, hosted IDE, or agent framework. It is the narrow 
 Install Talaria on both the controller and the workstation:
 
 ```sh
-npm install -g talaria
+npm install -g @mfoxx/talaria@beta
 talaria setup
 ```
 
@@ -81,7 +81,7 @@ Use `-o pretty`, `-o json`, or `-o raw` for human-readable, JSONL, or unadorned 
 The programmatic client exposes the same session model:
 
 ```ts
-import { TalariaClient } from 'talaria';
+import { TalariaClient } from '@mfoxx/talaria';
 
 const client = TalariaClient.overSsh({
   tailscaleHost: 'my-workstation',
@@ -119,7 +119,7 @@ npm test
 npm run format:check
 ```
 
-Maintainer architecture notes live in [`.humans/architecture.md`](.humans/architecture.md).
+Maintainer architecture notes live in [`.AGENTS/ARCHITECTURE.md`](.AGENTS/ARCHITECTURE.md).
 
 ## Issues and feature requests
 
