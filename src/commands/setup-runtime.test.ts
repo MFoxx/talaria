@@ -55,6 +55,18 @@ describe('setup runtime resolution', () => {
     expect(runtime.serviceExecutablePath.split(':')[0]).toBe('/opt/grok/bin');
   });
 
+  it('resolves and pins the Gemini CLI executable', async () => {
+    const runtime = await resolveSetupRuntime({
+      tools: ['gemini'],
+      nodePath: '/opt/node/bin/node',
+      cliPath: '/opt/talaria/dist/cli.js',
+      builtinToolBins: { gemini: '/opt/gemini/bin/gemini' },
+      run: () => Promise.resolve(ok),
+    });
+    expect(runtime.builtinToolBins).toEqual({ gemini: '/opt/gemini/bin/gemini' });
+    expect(runtime.serviceExecutablePath.split(':')[0]).toBe('/opt/gemini/bin');
+  });
+
   it("does not mistake Grok Build's agent alias for Cursor", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'talaria-tool-identity-'));
     try {

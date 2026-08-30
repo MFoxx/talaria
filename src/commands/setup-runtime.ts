@@ -4,13 +4,15 @@ import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { runCommand } from '../util/exec.js';
 
-export type BuiltinToolName = 'claude-code' | 'codex' | 'cursor' | 'grok' | 'opencode' | 'pi';
+export type BuiltinToolName =
+  'claude-code' | 'codex' | 'cursor' | 'gemini' | 'grok' | 'opencode' | 'pi';
 export type BuiltinToolBins = Partial<Record<BuiltinToolName, string>>;
 
 const TOOL_COMMANDS: Record<BuiltinToolName, readonly string[]> = {
   'claude-code': ['claude'],
   codex: ['codex'],
   cursor: ['cursor-agent', 'agent'],
+  gemini: ['gemini'],
   grok: ['grok'],
   opencode: ['opencode'],
   pi: ['pi'],
@@ -158,6 +160,7 @@ export async function resolveSetupRuntime(
       name === 'claude-code' ||
       name === 'codex' ||
       name === 'cursor' ||
+      name === 'gemini' ||
       name === 'grok' ||
       name === 'opencode' ||
       name === 'pi',

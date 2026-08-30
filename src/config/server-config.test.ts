@@ -118,6 +118,15 @@ describe('parseServerConfig', () => {
     expect(cfg.builtinToolBins).toEqual({ grok: '/usr/local/bin/grok' });
   });
 
+  it('accepts gemini as a pinned built-in tool', () => {
+    const cfg = parseServerConfig({
+      tools: ['gemini'],
+      builtinToolBins: { gemini: '/usr/local/bin/gemini' },
+    });
+    expect(cfg.tools).toEqual(['gemini']);
+    expect(cfg.builtinToolBins).toEqual({ gemini: '/usr/local/bin/gemini' });
+  });
+
   it('accepts opencode as a pinned built-in tool', () => {
     const cfg = parseServerConfig({
       tools: ['opencode'],

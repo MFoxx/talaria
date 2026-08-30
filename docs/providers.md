@@ -88,6 +88,31 @@ talaria tools -H desktop
 
 Cursor recommends `CURSOR_API_KEY` for headless use. Talaria does not currently inject tool-specific secrets: a project `.env`, shell profile, or terminal `export` is not automatically loaded by an OpenSSH forced command. Do not put API keys in `server.json`.
 
+## Gemini CLI
+
+Tool name: `gemini`
+
+Executable: `gemini`
+
+Talaria runs Gemini CLI in headless prompt mode with streaming JSON output by default. Native Gemini sessions can be continued with `talaria continue` when the initial run uses `stream-json` output.
+
+```sh
+talaria run -H desktop -t gemini -d /projects/app \
+  -p "Implement the requested validation and run its tests" \
+  --arg model=gemini-2.5-pro --arg approvalMode=auto_edit
+```
+
+Supported arguments:
+
+- `model` — model name.
+- `outputFormat` — `text`, `json`, or `stream-json` (default). Talaria passes all three formats through, but native continuation requires `stream-json`.
+- `debug` — enables Gemini CLI debug output.
+- `includeDirectories` — comma-separated additional workspace directories.
+- `yolo` — deprecated Gemini alias for auto-approving all actions; prefer `approvalMode=yolo` and use with caution.
+- `approvalMode` — `default`, `auto_edit`, `yolo`, or `plan`.
+
+The validated Talaria project directory is used as Gemini's process working directory. Talaria passes `--skip-trust` because Gemini cannot show its folder-trust dialog in a headless session; the directory has already been canonicalized and checked against the server allowlist. This bypasses Gemini's folder-trust gate, not its approval mode. Authenticate the `gemini` CLI as the workstation account that runs Talaria.
+
 ## Grok Build
 
 Tool name: `grok`  

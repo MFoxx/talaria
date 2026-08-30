@@ -12,6 +12,7 @@ import type { ServerConfig } from '../config/server-config.js';
 import { createClaudeCodeAdapter } from './claude-code.js';
 import { createCodexAdapter } from './codex.js';
 import { createCursorAdapter } from './cursor.js';
+import { createGeminiAdapter } from './gemini.js';
 import { createGrokAdapter } from './grok.js';
 import { createOpenCodeAdapter } from './opencode.js';
 import { createPiAdapter } from './pi.js';
@@ -34,6 +35,7 @@ export class AdapterRegistry {
       'claude-code': createClaudeCodeAdapter(config.builtinToolBins['claude-code']),
       codex: createCodexAdapter(config.builtinToolBins.codex),
       cursor: createCursorAdapter(config.builtinToolBins.cursor),
+      gemini: createGeminiAdapter(config.builtinToolBins.gemini),
       grok: createGrokAdapter(config.builtinToolBins.grok),
       opencode: createOpenCodeAdapter(config.builtinToolBins.opencode),
       pi: createPiAdapter(config.builtinToolBins.pi),
